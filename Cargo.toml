@@ -1,0 +1,24 @@
+[package]
+name = "fuck-esr"
+version = "0.1.0"
+edition = "2018"
+
+[workspace]
+members = [ "comma-v", "git-fast-import", "patchset", "rcs-ed" ]
+
+[dev-dependencies]
+tokio-test = "0.4.2"
+
+[dependencies]
+anyhow = "1.0.43"
+comma-v = { path = "comma-v" }
+flume = "0.10.8"
+git-fast-import = { path = "git-fast-import" }
+log = "0.4.14"
+num_cpus = "1.13.0"
+patchset = { path = "patchset" }
+pretty_env_logger = "0.4.0"
+rcs-ed = { path = "rcs-ed" }
+structopt = "0.3.22"
+thiserror = "1.0.26"
+tokio = { version = "1.10.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "fs"] }

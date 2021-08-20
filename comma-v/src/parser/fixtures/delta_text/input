@@ -1,0 +1,23 @@
+1.1
+log
+@add docker image build + push to CI (#175)
+
+* add docker image build + push to CI
+
+* change docker image version tags to be consistent with our other images
+
+* add git to image for lsif upload
+
+* Update Dockerfile documentation
+
+Co-Authored-By: Erik Seliger <erikseliger@@me.com>
+
+* add docker credentials
+
+Co-authored-by: Erik Seliger <erikseliger@@me.com>
+@
+text
+@d1 1
+a1 1
+FROM sourcegraph/alpine:3.10
+@
