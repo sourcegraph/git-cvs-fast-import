@@ -1,0 +1,39 @@
+# This approach is adapted from
+# https://jondot.medium.com/shipping-rust-binaries-with-goreleaser-d5aa42a46be0
+#
+# Basically, we want to use goreleaser to handle packaging and releasing
+# git-cvs-fast-import binaries, since it already has all the functionality
+# required to build the packages and create the changelog. To do that, we
+# provide a dummy main package that goreleaser can happily build into a no-op
+# binary, and then overwrite the binary with one that we build normally using
+# cargo.
+
+project_name: git-cvs-fast-import
+builds:
+  - main: .goreleaser/dummy.go
+    goarch:
+      - amd64
+    goos:
+      - linux
+    binary: git-cvs-fast-import
+    hooks:
+      post: sh .goreleaser/post.sh
+nfpms:
+  - package_name: git-cvs-fast-import
+    vendor: Sourcegraph
+    homepage: https://github.com/sourcegraph/git-cvs-fast-import
+    maintainer: Batch Changes <batch-changes@sourcegraph.com>
+    description: A tool to import CVS repositories into Git for analysis
+    license: Proprietary
+    formats:
+      - rpm
+      - deb
+    dependencies:
+      - git
+    bindir: /usr/bin
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+changelog:
+  sort: asc

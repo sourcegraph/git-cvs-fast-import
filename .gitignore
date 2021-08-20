@@ -1,0 +1,12 @@
+**/target
+**/.vscode
+Cargo.lock
+/dist
+
+
+# Added by cargo
+
+/target
+.gdb_history
+
+dist/
