@@ -4,7 +4,7 @@ mod blob;
 pub use blob::Blob;
 
 mod commit;
-pub use commit::{Commit, CommitBuilder};
+pub use commit::{Commit, CommitBuilder, FileCommand, Mode};
 
 mod identity;
 pub use identity::Identity;
@@ -28,11 +28,14 @@ impl<W> Client<W>
 where
     W: Write + Debug,
 {
-    pub fn new(writer: W) -> Self {
-        Self {
+    pub fn new(mut writer: W) -> anyhow::Result<Self> {
+        write!(writer, "feature done\n")?;
+        write!(writer, "feature date-format=raw\n")?;
+
+        Ok(Self {
             writer,
-            next_mark: 0,
-        }
+            next_mark: 1,
+        })
     }
 
     pub fn command<C>(&mut self, command: C) -> anyhow::Result<Mark>
@@ -61,6 +64,15 @@ where
         }
 
         Ok(())
+    }
+}
+
+impl<W> Drop for Client<W>
+where
+    W: Write + Debug,
+{
+    fn drop(&mut self) {
+        write!(self.writer, "done\n").unwrap();
     }
 }
 

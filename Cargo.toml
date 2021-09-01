@@ -16,6 +16,7 @@ flume = "0.10.8"
 git-fast-import = { path = "git-fast-import" }
 log = "0.4.14"
 num_cpus = "1.13.0"
+parse_duration = "2.1.1"
 patchset = { path = "patchset" }
 pretty_env_logger = "0.4.0"
 rcs-ed = { path = "rcs-ed" }

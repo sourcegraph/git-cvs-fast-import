@@ -29,6 +29,6 @@ impl Display for Identity {
         if let Some(name) = &self.name {
             write!(f, "{} ", name)?;
         }
-        write!(f, "<{}> {}", self.email, self.when)
+        write!(f, "<{}> {} +0000", self.email, self.when)
     }
 }

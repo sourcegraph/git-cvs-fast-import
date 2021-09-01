@@ -2,6 +2,7 @@ use std::{
     ffi::OsStr,
     io::{self, BufRead, BufReader},
     os::unix::prelude::OsStrExt,
+    time::Duration,
 };
 
 use discovery::Discovery;
@@ -9,11 +10,21 @@ use discovery::Discovery;
 use structopt::StructOpt;
 use tokio::task;
 
+mod commit;
 mod discovery;
 mod output;
 
 #[derive(Debug, StructOpt)]
 struct Opt {
+    #[structopt(
+        short,
+        long,
+        default_value = "120s",
+        parse(try_from_str = parse_duration::parse::parse),
+        help = "maximum time between file commits before they'll be considered different patch sets"
+    )]
+    delta: Duration,
+
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
 }
@@ -47,8 +58,16 @@ async fn main() -> anyhow::Result<()> {
     let (output, mut worker) = output::new(io::stdout());
     let worker = task::spawn(async move { worker.join().await });
 
+    let (commit_stream, commit_worker) = commit::new();
+    let delta = opt.delta;
+    let commit_worker = task::spawn(async move { commit_worker.join(delta).await });
+
     // Set up our file discovery.
-    let discovery = Discovery::new(&output, opt.jobs.unwrap_or_else(|| num_cpus::get()));
+    let discovery = Discovery::new(
+        &output,
+        &commit_stream,
+        opt.jobs.unwrap_or_else(|| num_cpus::get()),
+    );
 
     for r in BufReader::new(io::stdin()).split(b'\n').into_iter() {
         match r {
@@ -63,7 +82,38 @@ async fn main() -> anyhow::Result<()> {
     }
     drop(discovery);
 
-    // TODO: branch inference.
+    log::trace!("discovery phase done; getting patchsets");
+    drop(commit_stream);
+    let mut from = None;
+    for patch_set in commit_worker.await?? {
+        let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
+        builder
+            .committer(git_fast_import::Identity::new(
+                None,
+                patch_set.author,
+                patch_set.time,
+            )?)
+            .message(patch_set.message);
+
+        if let Some(mark) = from {
+            builder.from(mark);
+        }
+
+        for (path, mark) in patch_set.files.into_iter() {
+            match mark {
+                Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
+                    mode: git_fast_import::Mode::Normal,
+                    mark: mark,
+                    path: path.to_string_lossy().into(),
+                }),
+                None => builder.add_file_command(git_fast_import::FileCommand::Delete {
+                    path: path.to_string_lossy().into(),
+                }),
+            };
+        }
+
+        from = Some(output.commit(builder.build()?).await?);
+    }
 
     // We need to ensure all references to output are done before worker will
     // finish up.

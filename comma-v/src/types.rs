@@ -1,5 +1,5 @@
 use derive_more::{Deref, From, Into};
-use std::{collections::HashMap, fmt::Display, io::Cursor};
+use std::{collections::HashMap, fmt::Display, io::Cursor, time::SystemTime};
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -27,6 +27,20 @@ impl File {
             None
         }
     }
+
+    pub fn head(&self) -> Option<&Num> {
+        self.admin.head.as_ref()
+    }
+
+    pub fn revision(&self, revision: &Num) -> Option<(&Delta, &DeltaText)> {
+        if let Some(delta) = self.delta.get(revision) {
+            if let Some(delta_text) = self.delta_text.get(revision) {
+                return Some((delta, delta_text));
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +58,7 @@ pub struct Admin {
 
 #[derive(Debug, Clone)]
 pub struct Delta {
-    pub date: Date,
+    pub date: SystemTime,
     pub author: Id,
     pub state: Option<Id>,
     pub branches: Vec<Num>,
@@ -68,9 +82,6 @@ impl Display for Num {
         write!(f, "{}", String::from_utf8_lossy(&self.0))
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
-pub struct Date(pub Vec<u8>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
 pub struct Id(pub Vec<u8>);

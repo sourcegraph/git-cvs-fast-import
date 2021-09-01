@@ -193,6 +193,8 @@ fn desc(input: &[u8]) -> IResult<&[u8], types::Desc> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
+
     use crate::types::Num;
 
     use super::*;
@@ -215,7 +217,12 @@ mod tests {
     fn test_delta() {
         let (num, have) = delta(include_bytes!("fixtures/delta/input")).unwrap().1;
         assert_eq!(*num, b"1.2");
-        assert_eq!(*have.date, b"2021.08.20.17.34.26");
+        assert_eq!(
+            have.date,
+            DateTime::parse_from_rfc3339("2021-08-20T17:34:26+00:00")
+                .unwrap()
+                .into(),
+        );
         assert_eq!(*have.author, b"adam");
         assert_eq!(*have.state.unwrap(), b"Exp");
         assert_eq!(
@@ -260,8 +267,10 @@ mod tests {
 
         assert_eq!(have.delta.len(), 4);
         assert_eq!(
-            *have.delta.get(&types::Num(b"1.4".to_vec())).unwrap().date,
-            b"2021.08.11.19.08.27"
+            have.delta.get(&types::Num(b"1.4".to_vec())).unwrap().date,
+            DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")
+                .unwrap()
+                .into(),
         );
 
         assert_eq!(*have.desc, b"");

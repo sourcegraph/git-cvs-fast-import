@@ -39,6 +39,15 @@ impl Output {
         })?;
         Ok(rx.await?)
     }
+
+    pub(crate) async fn commit(&self, commit: git_fast_import::Commit) -> anyhow::Result<Mark> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send(Command::Commit(commit, tx)).map_err(|e| {
+            log::error!("received command error: {}", &e);
+            e
+        })?;
+        Ok(rx.await?)
+    }
 }
 
 impl<W> Worker<W>
@@ -46,7 +55,7 @@ where
     W: Debug + Write + Send,
 {
     pub(crate) async fn join(&mut self) -> anyhow::Result<()> {
-        let mut client = Client::new(&mut self.w);
+        let mut client = Client::new(&mut self.w)?;
         let handle_send_result = |r| match r {
             Ok(_) => Ok(()),
             Err(mark) => Err(Error::MarkSendFailed(mark)),
