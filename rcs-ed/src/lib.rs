@@ -1,4 +1,7 @@
-use std::io::{BufRead, BufReader, Read};
+use std::{
+    io::{BufRead, BufReader, Read},
+    mem,
+};
 use thiserror::Error;
 
 mod command;
@@ -53,15 +56,13 @@ impl File {
     }
 
     pub fn apply(&self, commands: &CommandList) -> anyhow::Result<Vec<Vec<u8>>> {
-        let line_commands = calculate_line_commands(self.lines.len(), commands)?;
-        Ok(line_commands.apply(self.lines.iter().cloned().collect())?)
+        Ok(LineCommands::calculate(self.lines.len(), commands)?
+            .apply(self.lines.iter().cloned().collect())?)
     }
 
     pub fn apply_in_place(&mut self, commands: &CommandList) -> anyhow::Result<()> {
-        let line_commands = calculate_line_commands(self.lines.len(), commands)?;
-
-        let input = std::mem::replace(&mut self.lines, Vec::new());
-        self.lines = line_commands.apply(input)?;
+        let input = mem::take(&mut self.lines);
+        self.lines = LineCommands::calculate(input.len(), commands)?.apply(input)?;
 
         Ok(())
     }
@@ -84,7 +85,7 @@ struct LineCommands<'a> {
     prepend: Vec<Vec<u8>>,
 }
 
-impl LineCommands<'_> {
+impl<'a> LineCommands<'a> {
     fn apply(self, mut input: Vec<Vec<u8>>) -> anyhow::Result<Vec<Vec<u8>>> {
         let mut output = self.prepend;
         output.reserve(self.lines.len());
@@ -107,64 +108,61 @@ impl LineCommands<'_> {
 
         Ok(output)
     }
+
+    fn calculate(n: usize, commands: &'a CommandList) -> Result<Self, LineCommandError> {
+        let mut line_commands = LineCommands {
+            lines: vec![Line::Keep; n],
+            prepend: Vec::new(),
+        };
+
+        for command in commands {
+            match command {
+                Command::Add { position, content } if *position > 0 => {
+                    match &mut line_commands.lines[position - 1] {
+                        Line::Add(_commands) => {
+                            // We can't add the same line twice! (Or can we? No, no,
+                            // we can't.)
+                            return Err(LineCommandError::ConflictingAppends(*position));
+                        }
+                        Line::Delete => {
+                            line_commands.lines[position - 1] = Line::Replace(vec![content]);
+                        }
+                        Line::Keep => {
+                            line_commands.lines[position - 1] = Line::Add(vec![content]);
+                        }
+                        Line::Replace(commands) => {
+                            commands.push(content);
+                        }
+                    }
+                }
+                Command::Add {
+                    position: _,
+                    content,
+                } => {
+                    // Special case: insert at the start of the commands.
+                    if line_commands.prepend.len() > 0 {
+                        return Err(LineCommandError::ConflictingAppends(0));
+                    }
+
+                    line_commands.prepend.extend(content.iter().cloned());
+                }
+                Command::Delete { position, lines } => {
+                    line_commands.lines.splice(
+                        position - 1..position + lines - 1,
+                        vec![Line::Delete; *lines],
+                    );
+                }
+            }
+        }
+
+        Ok(line_commands)
+    }
 }
 
 #[derive(Debug, Error)]
 enum LineCommandError {
     #[error("multiple append commands were found for the same line: {0}")]
     ConflictingAppends(usize),
-}
-
-fn calculate_line_commands(
-    n: usize,
-    commands: &CommandList,
-) -> Result<LineCommands, LineCommandError> {
-    let mut line_commands = LineCommands {
-        lines: vec![Line::Keep; n],
-        prepend: Vec::new(),
-    };
-
-    for command in commands {
-        match command {
-            Command::Add { position, content } if *position > 0 => {
-                match &mut line_commands.lines[position - 1] {
-                    Line::Add(_commands) => {
-                        // We can't add the same line twice! (Or can we? No, no,
-                        // we can't.)
-                        return Err(LineCommandError::ConflictingAppends(*position));
-                    }
-                    Line::Delete => {
-                        line_commands.lines[position - 1] = Line::Replace(vec![content]);
-                    }
-                    Line::Keep => {
-                        line_commands.lines[position - 1] = Line::Add(vec![content]);
-                    }
-                    Line::Replace(commands) => {
-                        commands.push(content);
-                    }
-                }
-            }
-            Command::Add {
-                position: _,
-                content,
-            } => {
-                // Special case: insert at the start of the commands.
-                if line_commands.prepend.len() > 0 {
-                    return Err(LineCommandError::ConflictingAppends(0));
-                }
-
-                line_commands.prepend.extend(content.iter().cloned());
-            }
-            Command::Delete { position, lines } => {
-                line_commands.lines.splice(
-                    position - 1..position + lines - 1,
-                    vec![Line::Delete; *lines],
-                );
-            }
-        }
-    }
-
-    Ok(line_commands)
 }
 
 #[cfg(test)]
