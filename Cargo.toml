@@ -1,5 +1,5 @@
 [package]
-name = "fuck-esr"
+name = "git-cvs-fast-import"
 version = "0.1.0"
 edition = "2018"
 
