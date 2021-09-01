@@ -93,7 +93,6 @@ async fn handle_path(output: &Output, path: &OsStr) -> anyhow::Result<()> {
         };
 
         let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
-        eprintln!("{} parsed: {:?}", &disp, &commands);
         file.apply_in_place(&commands)?;
 
         // TODO: do something with the mark.
