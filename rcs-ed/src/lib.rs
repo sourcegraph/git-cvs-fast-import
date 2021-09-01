@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader, Read};
+use thiserror::Error;
 
 mod command;
 
@@ -52,10 +53,11 @@ impl File {
     }
 
     pub fn apply(&self, commands: &CommandList) -> anyhow::Result<Vec<Vec<u8>>> {
-        let line_commands = calculate_line_commands(self.lines.len(), commands);
+        let line_commands = calculate_line_commands(self.lines.len(), commands)?;
 
-        let mut output = Vec::with_capacity(line_commands.len());
-        for (orig, line) in self.lines.iter().zip(line_commands.into_iter()) {
+        let mut output = Vec::with_capacity(line_commands.output_capacity());
+        output.extend(line_commands.prepend.into_iter());
+        for (orig, line) in self.lines.iter().zip(line_commands.lines.into_iter()) {
             match line {
                 Line::Add(contents) => {
                     output.push(orig.clone());
@@ -75,10 +77,11 @@ impl File {
     }
 
     pub fn apply_in_place(&mut self, commands: &CommandList) -> anyhow::Result<()> {
-        let line_commands = calculate_line_commands(self.lines.len(), commands);
+        let line_commands = calculate_line_commands(self.lines.len(), commands)?;
 
-        let mut output = Vec::with_capacity(line_commands.len());
-        for (orig, line) in self.lines.drain(..).zip(line_commands.into_iter()) {
+        let mut output = Vec::with_capacity(line_commands.output_capacity());
+        output.extend(line_commands.prepend.into_iter());
+        for (orig, line) in self.lines.drain(..).zip(line_commands.lines.into_iter()) {
             match line {
                 Line::Add(contents) => {
                     output.push(orig);
@@ -111,13 +114,36 @@ impl File {
     }
 }
 
-fn calculate_line_commands(n: usize, commands: &CommandList) -> Vec<Line> {
-    let mut line_commands = vec![Line::Keep; n];
+struct LineCommands<'a> {
+    lines: Vec<Line<'a>>,
+    prepend: Vec<Vec<u8>>,
+}
+
+impl LineCommands<'_> {
+    fn output_capacity(&self) -> usize {
+        self.lines.len() + self.prepend.len()
+    }
+}
+
+#[derive(Debug, Error)]
+enum LineCommandError {
+    #[error("multiple a0 commands were found, but a valid script can have only one")]
+    ConflictingPrepends,
+}
+
+fn calculate_line_commands(
+    n: usize,
+    commands: &CommandList,
+) -> Result<LineCommands, LineCommandError> {
+    let mut line_commands = LineCommands {
+        lines: vec![Line::Keep; n],
+        prepend: Vec::new(),
+    };
 
     for command in commands {
         match command {
             Command::Add { position, content } if *position > 0 => {
-                match &mut line_commands[position - 1] {
+                match &mut line_commands.lines[position - 1] {
                     Line::Add(commands) => {
                         // FIXME: I don't really know if this is the right
                         // behaviour when there are multiple a commands on the
@@ -125,22 +151,29 @@ fn calculate_line_commands(n: usize, commands: &CommandList) -> Vec<Line> {
                         commands.push(content);
                     }
                     Line::Delete => {
-                        line_commands[position - 1] = Line::Replace(vec![content]);
+                        line_commands.lines[position - 1] = Line::Replace(vec![content]);
                     }
                     Line::Keep => {
-                        line_commands[position - 1] = Line::Add(vec![content]);
+                        line_commands.lines[position - 1] = Line::Add(vec![content]);
                     }
                     Line::Replace(commands) => {
                         commands.push(content);
                     }
                 }
             }
-            Command::Add { position, content } => {
+            Command::Add {
+                position: _,
+                content,
+            } => {
                 // Special case: insert at the start of the commands.
-                todo!()
+                if line_commands.prepend.len() > 0 {
+                    return Err(LineCommandError::ConflictingPrepends);
+                }
+
+                line_commands.prepend.extend(content.iter().cloned());
             }
             Command::Delete { position, lines } => {
-                line_commands.splice(
+                line_commands.lines.splice(
                     position - 1..position + lines - 1,
                     vec![Line::Delete; *lines],
                 );
@@ -148,11 +181,16 @@ fn calculate_line_commands(n: usize, commands: &CommandList) -> Vec<Line> {
         }
     }
 
-    line_commands
+    Ok(line_commands)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+    };
+
     use super::*;
 
     #[test]
@@ -183,5 +221,37 @@ mod tests {
         .unwrap();
 
         assert_eq!(file.into_bytes(), include_bytes!("fixtures/tzu"));
+    }
+
+    #[test]
+    fn test_add_first_line() {
+        let mut file = File::new(include_bytes!("fixtures/a0/1.15").as_ref()).unwrap();
+
+        for i in (1..15).rev() {
+            // Read and apply the script.
+            file.apply_in_place(
+                &Script::parse(fs::File::open(fixture_path(format!("a0/1.{}.ed", i))).unwrap())
+                    .into_command_list()
+                    .unwrap(),
+            )
+            .unwrap();
+
+            // Compare to the expected output.
+            let expected = fs::read(fixture_path(format!("a0/1.{}", i))).unwrap();
+            assert_eq!(&file.as_bytes(), &expected);
+        }
+    }
+
+    // We can't always hardcode the path for fixtures, so this will resolve them
+    // at runtime.
+    fn fixture_path<P>(path: P) -> PathBuf
+    where
+        P: AsRef<Path>,
+    {
+        let mut buf = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+        buf.extend(["src", "fixtures"]);
+        buf.push(path);
+
+        buf
     }
 }
