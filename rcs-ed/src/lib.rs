@@ -54,49 +54,14 @@ impl File {
 
     pub fn apply(&self, commands: &CommandList) -> anyhow::Result<Vec<Vec<u8>>> {
         let line_commands = calculate_line_commands(self.lines.len(), commands)?;
-
-        let mut output = Vec::with_capacity(line_commands.output_capacity());
-        output.extend(line_commands.prepend.into_iter());
-        for (orig, line) in self.lines.iter().zip(line_commands.lines.into_iter()) {
-            match line {
-                Line::Add(contents) => {
-                    output.push(orig.clone());
-                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
-                }
-                Line::Delete => {}
-                Line::Keep => {
-                    output.push(orig.clone());
-                }
-                Line::Replace(contents) => {
-                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
-                }
-            }
-        }
-
-        Ok(output)
+        Ok(line_commands.apply(self.lines.iter().cloned().collect())?)
     }
 
     pub fn apply_in_place(&mut self, commands: &CommandList) -> anyhow::Result<()> {
         let line_commands = calculate_line_commands(self.lines.len(), commands)?;
 
-        let mut output = Vec::with_capacity(line_commands.output_capacity());
-        output.extend(line_commands.prepend.into_iter());
-        for (orig, line) in self.lines.drain(..).zip(line_commands.lines.into_iter()) {
-            match line {
-                Line::Add(contents) => {
-                    output.push(orig);
-                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
-                }
-                Line::Delete => {}
-                Line::Keep => {
-                    output.push(orig);
-                }
-                Line::Replace(contents) => {
-                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
-                }
-            }
-        }
-        self.lines = output;
+        let input = std::mem::replace(&mut self.lines, Vec::new());
+        self.lines = line_commands.apply(input)?;
 
         Ok(())
     }
@@ -120,15 +85,34 @@ struct LineCommands<'a> {
 }
 
 impl LineCommands<'_> {
-    fn output_capacity(&self) -> usize {
-        self.lines.len() + self.prepend.len()
+    fn apply(self, mut input: Vec<Vec<u8>>) -> anyhow::Result<Vec<Vec<u8>>> {
+        let mut output = self.prepend;
+        output.reserve(self.lines.len());
+
+        for (orig, cmd) in input.drain(..).zip(self.lines.into_iter()) {
+            match cmd {
+                Line::Add(contents) => {
+                    output.push(orig);
+                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
+                }
+                Line::Delete => {}
+                Line::Keep => {
+                    output.push(orig);
+                }
+                Line::Replace(contents) => {
+                    output.extend(contents.iter().flat_map(|content| content.iter()).cloned());
+                }
+            }
+        }
+
+        Ok(output)
     }
 }
 
 #[derive(Debug, Error)]
 enum LineCommandError {
-    #[error("multiple a0 commands were found, but a valid script can have only one")]
-    ConflictingPrepends,
+    #[error("multiple append commands were found for the same line: {0}")]
+    ConflictingAppends(usize),
 }
 
 fn calculate_line_commands(
@@ -144,11 +128,10 @@ fn calculate_line_commands(
         match command {
             Command::Add { position, content } if *position > 0 => {
                 match &mut line_commands.lines[position - 1] {
-                    Line::Add(commands) => {
-                        // FIXME: I don't really know if this is the right
-                        // behaviour when there are multiple a commands on the
-                        // same line. Shrug.
-                        commands.push(content);
+                    Line::Add(_commands) => {
+                        // We can't add the same line twice! (Or can we? No, no,
+                        // we can't.)
+                        return Err(LineCommandError::ConflictingAppends(*position));
                     }
                     Line::Delete => {
                         line_commands.lines[position - 1] = Line::Replace(vec![content]);
@@ -167,7 +150,7 @@ fn calculate_line_commands(
             } => {
                 // Special case: insert at the start of the commands.
                 if line_commands.prepend.len() > 0 {
-                    return Err(LineCommandError::ConflictingPrepends);
+                    return Err(LineCommandError::ConflictingAppends(0));
                 }
 
                 line_commands.prepend.extend(content.iter().cloned());
