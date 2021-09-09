@@ -1,4 +1,5 @@
 use derive_more::{Deref, From, Into};
+use eq_macro::EqU8;
 use std::{collections::HashMap, fmt::Display, io::Cursor, time::SystemTime};
 
 #[derive(Debug, Clone)]
@@ -74,7 +75,7 @@ pub struct DeltaText {
     pub text: VString,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Num(pub Vec<u8>);
 
 impl Display for Num {
@@ -83,13 +84,13 @@ impl Display for Num {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Id(pub Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Sym(pub Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct VString(pub Vec<u8>);
 
 impl VString {
@@ -98,5 +99,5 @@ impl VString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct IntString(pub Vec<u8>);

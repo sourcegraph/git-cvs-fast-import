@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [workspace]
-members = [ "comma-v", "git-fast-import", "patchset", "rcs-ed" ]
+members = [ "comma-v", "eq-macro", "git-fast-import", "patchset", "rcs-ed" ]
 
 [dev-dependencies]
 tokio-test = "0.4.2"

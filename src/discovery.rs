@@ -2,10 +2,12 @@ use std::{
     ffi::{OsStr, OsString},
     iter::FromIterator,
     os::unix::prelude::{OsStrExt, OsStringExt},
+    path::{Path, PathBuf},
 };
 
+use comma_v::{Delta, DeltaText, Id};
 use flume::Sender;
-use git_fast_import::Blob;
+use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
 
@@ -55,7 +57,7 @@ impl Discovery {
 async fn handle_path(output: &Output, commit: &commit::Commit, path: &OsStr) -> anyhow::Result<()> {
     let cv = comma_v::parse(&std::fs::read(path)?)?;
     let disp = path.to_string_lossy();
-    let real_path = strip_comma_v_suffix(path);
+    let real_path = munge_raw_path(Path::new(path));
 
     // Start at the head and work our way down.
     let num = match cv.head() {
@@ -66,11 +68,8 @@ async fn handle_path(output: &Output, commit: &commit::Commit, path: &OsStr) -> 
     log::trace!("{}: found HEAD revision {}", disp, num);
     let mut file = File::new(delta_text.text.as_cursor())?;
 
-    // TODO: detect deletion and prevent a mark.
-    let mark = output.blob(Blob::new(&file.as_bytes())).await?;
-    commit
-        .observe(&real_path, Some(mark), delta, delta_text)
-        .await?;
+    let mark = handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
+    log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
 
     loop {
         // TODO: handle branches.
@@ -89,21 +88,101 @@ async fn handle_path(output: &Output, commit: &commit::Commit, path: &OsStr) -> 
         let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
         file.apply_in_place(&commands)?;
 
-        let mark = output.blob(Blob::new(&file.as_bytes())).await?;
-        commit
-            .observe(&real_path, Some(mark), delta, delta_text)
-            .await?;
+        let mark =
+            handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
+        log::trace!("{}: wrote {} to mark {:?}", disp, num, mark);
     }
 
     Ok(())
 }
 
-fn strip_comma_v_suffix(input: &OsStr) -> OsString {
-    let mut buf = Vec::from(input.as_bytes());
-    if buf.ends_with(b",v") {
-        buf.pop();
-        buf.pop();
+async fn handle_file_version(
+    output: &Output,
+    commit: &commit::Commit,
+    file: &File,
+    delta: &Delta,
+    delta_text: &DeltaText,
+    real_path: &OsStr,
+) -> anyhow::Result<Option<Mark>> {
+    let mark = match &delta.state {
+        Some(state) if state == b"dead".as_ref() => None,
+        _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
+    };
+
+    commit.observe(&real_path, mark, delta, delta_text).await?;
+    Ok(mark)
+}
+
+/// Strips CVSROOT-specific components of the file path: specifically, removing
+/// the ,v suffix if present and stripping the Attic if it's the last directory
+/// in the path. Returns a newly allocated OsString.
+fn munge_raw_path(input: &Path) -> OsString {
+    if let Some(input_file) = input.file_name() {
+        let file = strip_comma_v_suffix(input_file).unwrap_or_else(|| OsString::from(input_file));
+        let path = strip_attic_suffix(input)
+            .map(|path| path.join(file))
+            .unwrap_or_else(|| input_file.into());
+
+        path.into_os_string()
+    } else {
+        input.into()
+    }
+}
+
+fn strip_attic_suffix(path: &Path) -> Option<&Path> {
+    path.parent()
+        .map(|parent| {
+            if parent.ends_with(OsStr::from_bytes(b"Attic")) {
+                parent.parent()
+            } else {
+                Some(parent)
+            }
+        })
+        .flatten()
+}
+
+fn strip_comma_v_suffix(file: &OsStr) -> Option<OsString> {
+    if let Some(stripped) = file.as_bytes().strip_suffix(b",v") {
+        return Some(OsString::from(OsStr::from_bytes(stripped)));
     }
 
-    OsString::from_vec(buf)
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_munge_raw_path() {
+        let assert_munge = |input, want| {
+            assert_eq!(
+                munge_raw_path(Path::new(OsStr::from_bytes(input))),
+                OsString::from(OsStr::from_bytes(want))
+            )
+        };
+
+        // Basic relative and absolute cases with ,v suffixes.
+        assert_munge(b"foo", b"foo");
+        assert_munge(b"foo,v", b"foo");
+        assert_munge(b"foo/bar", b"foo/bar");
+        assert_munge(b"/foo", b"/foo");
+        assert_munge(b"/foo,v", b"/foo");
+        assert_munge(b"/foo/bar,v", b"/foo/bar");
+        assert_munge(b"/foo/Attic/bar", b"/foo/bar");
+
+        // Basic Attic cases.
+        assert_munge(b"foo/Attic/bar", b"foo/bar");
+        assert_munge(b"foo/Attic/bar,v", b"foo/bar");
+        assert_munge(b"/foo/Attic/bar", b"/foo/bar");
+        assert_munge(b"/foo/Attic/bar,v", b"/foo/bar");
+
+        // Non-standard Attic cases where it shouldn't be stripped.
+        assert_munge(b"Attic", b"Attic");
+        assert_munge(b"Attic,v", b"Attic");
+        assert_munge(b"foo/Attic", b"foo/Attic");
+        assert_munge(b"/foo/Attic", b"/foo/Attic");
+        assert_munge(b"Attic/Attic/Attic/foo/bar,v", b"Attic/Attic/Attic/foo/bar");
+        assert_munge(b"/Attic/Attic/foo,v", b"/Attic/foo");
+    }
 }
