@@ -1,6 +1,6 @@
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     ffi::{OsStr, OsString},
     fmt::Debug,
     hash::Hash,
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut detector = Detector::new();
+        let mut detector = Detector::new(Duration::from_secs(120));
         let branches = vec![String::from("branches")];
 
         // Add two files on the same commit.
