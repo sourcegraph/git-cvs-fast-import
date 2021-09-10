@@ -1,11 +1,10 @@
 use std::{
     ffi::{OsStr, OsString},
-    iter::FromIterator,
-    os::unix::prelude::{OsStrExt, OsStringExt},
-    path::{Path, PathBuf},
+    os::unix::prelude::OsStrExt,
+    path::Path,
 };
 
-use comma_v::{Delta, DeltaText, Id};
+use comma_v::{Delta, DeltaText};
 use flume::Sender;
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
@@ -153,36 +152,38 @@ fn strip_comma_v_suffix(file: &OsStr) -> Option<OsString> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_munge_raw_path() {
-        let assert_munge = |input, want| {
+    macro_rules! assert_munge {
+        ($input:expr, $want:expr) => {
             assert_eq!(
-                munge_raw_path(Path::new(OsStr::from_bytes(input))),
-                OsString::from(OsStr::from_bytes(want))
+                munge_raw_path(Path::new(OsStr::from_bytes($input))),
+                OsString::from(OsStr::from_bytes($want))
             )
         };
+    }
 
+    #[test]
+    fn test_munge_raw_path() {
         // Basic relative and absolute cases with ,v suffixes.
-        assert_munge(b"foo", b"foo");
-        assert_munge(b"foo,v", b"foo");
-        assert_munge(b"foo/bar", b"foo/bar");
-        assert_munge(b"/foo", b"/foo");
-        assert_munge(b"/foo,v", b"/foo");
-        assert_munge(b"/foo/bar,v", b"/foo/bar");
-        assert_munge(b"/foo/Attic/bar", b"/foo/bar");
+        assert_munge!(b"foo", b"foo");
+        assert_munge!(b"foo,v", b"foo");
+        assert_munge!(b"foo/bar", b"foo/bar");
+        assert_munge!(b"/foo", b"/foo");
+        assert_munge!(b"/foo,v", b"/foo");
+        assert_munge!(b"/foo/bar,v", b"/foo/bar");
+        assert_munge!(b"/foo/Attic/bar", b"/foo/bar");
 
         // Basic Attic cases.
-        assert_munge(b"foo/Attic/bar", b"foo/bar");
-        assert_munge(b"foo/Attic/bar,v", b"foo/bar");
-        assert_munge(b"/foo/Attic/bar", b"/foo/bar");
-        assert_munge(b"/foo/Attic/bar,v", b"/foo/bar");
+        assert_munge!(b"foo/Attic/bar", b"foo/bar");
+        assert_munge!(b"foo/Attic/bar,v", b"foo/bar");
+        assert_munge!(b"/foo/Attic/bar", b"/foo/bar");
+        assert_munge!(b"/foo/Attic/bar,v", b"/foo/bar");
 
         // Non-standard Attic cases where it shouldn't be stripped.
-        assert_munge(b"Attic", b"Attic");
-        assert_munge(b"Attic,v", b"Attic");
-        assert_munge(b"foo/Attic", b"foo/Attic");
-        assert_munge(b"/foo/Attic", b"/foo/Attic");
-        assert_munge(b"Attic/Attic/Attic/foo/bar,v", b"Attic/Attic/Attic/foo/bar");
-        assert_munge(b"/Attic/Attic/foo,v", b"/Attic/foo");
+        assert_munge!(b"Attic", b"Attic");
+        assert_munge!(b"Attic,v", b"Attic");
+        assert_munge!(b"foo/Attic", b"foo/Attic");
+        assert_munge!(b"/foo/Attic", b"/foo/Attic");
+        assert_munge!(b"Attic/Attic/Attic/foo/bar,v", b"Attic/Attic/Attic/foo/bar");
+        assert_munge!(b"/Attic/Attic/foo,v", b"/Attic/foo");
     }
 }
