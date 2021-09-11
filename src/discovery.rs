@@ -71,7 +71,7 @@ async fn handle_path(output: &Output, commit: &commit::Commit, path: &OsStr) -> 
     log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
 
     loop {
-        // TODO: handle branches.
+        // TODO: handle branches and tags.
         let num = match &delta.next {
             Some(next) => next,
             None => {
