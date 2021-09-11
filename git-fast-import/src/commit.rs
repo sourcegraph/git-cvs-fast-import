@@ -5,6 +5,7 @@ use std::{
 
 use crate::{Command, Identity, Mark};
 
+/// A `commit` command stores a commit in the Git repository.
 #[derive(Debug)]
 pub struct Commit {
     branch_ref: String,
@@ -41,6 +42,7 @@ impl Command for Commit {
     }
 }
 
+/// A builder to create a [`Commit`].
 #[derive(Debug)]
 pub struct CommitBuilder {
     branch_ref: String,
@@ -53,6 +55,7 @@ pub struct CommitBuilder {
 }
 
 impl CommitBuilder {
+    /// Constructs a new commit builder.
     pub fn new(branch_ref: String) -> Self {
         Self {
             branch_ref,
@@ -65,36 +68,48 @@ impl CommitBuilder {
         }
     }
 
+    /// Sets the commit author.
     pub fn author(&mut self, identity: Identity) -> &mut Self {
         self.author = Some(identity);
         self
     }
 
+    /// Sets the commit committer.
     pub fn committer(&mut self, committer: Identity) -> &mut Self {
         self.committer = Some(committer);
         self
     }
 
+    /// Sets the commit message.
     pub fn message(&mut self, message: String) -> &mut Self {
         self.message = Some(message);
         self
     }
 
+    /// Sets the previous commit that this commit extends from.
+    ///
+    /// Note that this is _not_ an implementation of the `From` trait.
     pub fn from(&mut self, from: Mark) -> &mut Self {
         self.from = Some(from);
         self
     }
 
+    /// Sets the commit that is merged into this commit.
     pub fn merge(&mut self, merge: Mark) -> &mut Self {
         self.merge = Some(merge);
         self
     }
 
+    /// Adds a file command to the commit.
     pub fn add_file_command(&mut self, command: FileCommand) -> &mut Self {
         self.commands.push(command);
         self
     }
 
+    /// Builds a [`Commit`] from the builder.
+    ///
+    /// If [`committer()`][Self::committer] and [`message()`][Self::message]
+    /// have not been called, this will return an error.
     pub fn build(self) -> Result<Commit, Error> {
         let committer = match self.committer {
             Some(committer) => committer,
@@ -121,24 +136,29 @@ impl CommitBuilder {
     }
 }
 
+/// A file command within a commit, representing a change to a particular file.
 #[derive(Debug, Clone)]
 pub enum FileCommand {
+    /// A modified file, with a [`Mark`][crate::Mark] representing the new file
+    /// content and the file mode.
     Modify {
         mode: Mode,
         mark: Mark,
         path: String,
     },
-    Delete {
-        path: String,
-    },
-    Copy {
-        from: String,
-        to: String,
-    },
-    Rename {
-        from: String,
-        to: String,
-    },
+
+    /// A deleted file.
+    Delete { path: String },
+
+    /// A copied file.
+    Copy { from: String, to: String },
+
+    /// A renamed file.
+    Rename { from: String, to: String },
+
+    /// A special command that deletes all files in the working tree. All files
+    /// that should exist after this commit must be added using
+    /// [`Modify`][FileCommand::Modify] after this command.
     DeleteAll,
 }
 
@@ -154,10 +174,17 @@ impl Display for FileCommand {
     }
 }
 
+/// A file mode.
 #[derive(Debug, Copy, Clone)]
 pub enum Mode {
+    /// A normal, non-executable file.
     Normal,
+
+    /// A normal, executable file.
     Executable,
+
+    /// A symbolic link, in which case the file content is expected to be the
+    /// path to the target file.
     Symlink,
 }
 
@@ -171,6 +198,7 @@ impl Display for Mode {
     }
 }
 
+/// Possible errors when creating [`Commit`] instances.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("a committer must be provided")]

@@ -31,6 +31,11 @@ struct Opt {
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
 
+    // TODO: refactor into something more sturdy that can hold state, since
+    // we'll need more than just marks.
+    #[structopt(short, long, parse(from_os_str), help = "mark file")]
+    mark_file: Option<OsString>,
+
     #[structopt(
         short,
         long,
@@ -66,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Set up our git-fast-import export. Note that we need to immediately spawn
     // the worker onto a new task, but we'll join it later.
-    let (output, mut worker) = output::new(io::stdout());
+    let (output, mut worker) = output::new(io::stdout(), opt.mark_file.as_ref());
     let worker = task::spawn(async move { worker.join().await });
 
     let (commit_stream, commit_worker) = commit::new();

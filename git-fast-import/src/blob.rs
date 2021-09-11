@@ -1,11 +1,13 @@
 use crate::Command;
 
+/// A `blob` command stores data in the Git repository.
 #[derive(Debug)]
 pub struct Blob {
     data: Vec<u8>,
 }
 
 impl Blob {
+    /// Constructs a new blob from the given data.
     pub fn new(data: &[u8]) -> Self {
         Self {
             data: Vec::from(data),

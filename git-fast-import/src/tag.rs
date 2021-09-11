@@ -1,5 +1,6 @@
 use crate::{Command, Identity, Mark};
 
+/// A `tag` fast-import command.
 #[derive(Debug)]
 pub struct Tag {
     name: String,
@@ -9,6 +10,7 @@ pub struct Tag {
 }
 
 impl Tag {
+    /// Constructs a new tag from the given mark and metadata.
     pub fn new(name: String, from: Mark, tagger: Identity, message: String) -> Self {
         Self {
             name,

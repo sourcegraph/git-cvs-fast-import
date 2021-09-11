@@ -7,4 +7,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.43"
+derive_more = "0.99.16"
+nom = "7.0.0"
+rev_lines = "0.2.1"
 thiserror = "1.0.26"

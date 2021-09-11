@@ -3,6 +3,11 @@ use std::{
     time::{SystemTime, SystemTimeError},
 };
 
+/// A Git identity.
+///
+/// Git identities always include an "e-mail" (which is not actually checked for
+/// validity), and may include a real name as well. A commit identity also
+/// includes the time the action took place.
 #[derive(Debug)]
 pub struct Identity {
     name: Option<String>,
@@ -11,6 +16,7 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Constructs a new identity.
     pub fn new(
         name: Option<String>,
         email: String,
