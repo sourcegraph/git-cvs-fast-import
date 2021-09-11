@@ -18,19 +18,28 @@ pub(crate) struct Discovery {
 }
 
 impl Discovery {
-    pub fn new(output: &Output, commit: &commit::Commit, jobs: usize) -> Self {
+    pub fn new(
+        output: &Output,
+        commit: &commit::Commit,
+        jobs: usize,
+        prefix: Option<&OsStr>,
+    ) -> Self {
         let (tx, rx) = flume::unbounded::<OsString>();
 
         for _i in 0..jobs {
             let local_rx = rx.clone();
             let local_commit = commit.clone();
             let local_output = output.clone();
+            let local_prefix = prefix.map(|prefix| OsString::from(prefix));
 
             task::spawn(async move {
                 loop {
                     let path = local_rx.recv_async().await?;
                     log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
-                    if let Err(e) = handle_path(&local_output, &local_commit, &path).await {
+                    if let Err(e) =
+                        handle_path(&local_output, &local_commit, &path, local_prefix.as_ref())
+                            .await
+                    {
                         log::warn!(
                             "error processing {}: {:?}",
                             String::from_utf8_lossy(path.as_bytes()),
@@ -53,10 +62,15 @@ impl Discovery {
     }
 }
 
-async fn handle_path(output: &Output, commit: &commit::Commit, path: &OsStr) -> anyhow::Result<()> {
+async fn handle_path(
+    output: &Output,
+    commit: &commit::Commit,
+    path: &OsStr,
+    prefix: Option<&OsString>,
+) -> anyhow::Result<()> {
     let cv = comma_v::parse(&std::fs::read(path)?)?;
     let disp = path.to_string_lossy();
-    let real_path = munge_raw_path(Path::new(path));
+    let real_path = munge_raw_path(Path::new(path), prefix);
 
     // Start at the head and work our way down.
     let num = match cv.head() {
@@ -115,16 +129,21 @@ async fn handle_file_version(
 /// Strips CVSROOT-specific components of the file path: specifically, removing
 /// the ,v suffix if present and stripping the Attic if it's the last directory
 /// in the path. Returns a newly allocated OsString.
-fn munge_raw_path(input: &Path) -> OsString {
-    if let Some(input_file) = input.file_name() {
+fn munge_raw_path(input: &Path, prefix: Option<&OsString>) -> OsString {
+    let unprefixed = match prefix {
+        Some(prefix) => input.strip_prefix(prefix).unwrap_or(input),
+        None => input,
+    };
+
+    if let Some(input_file) = unprefixed.file_name() {
         let file = strip_comma_v_suffix(input_file).unwrap_or_else(|| OsString::from(input_file));
-        let path = strip_attic_suffix(input)
+        let path = strip_attic_suffix(unprefixed)
             .map(|path| path.join(file))
             .unwrap_or_else(|| input_file.into());
 
         path.into_os_string()
     } else {
-        input.into()
+        unprefixed.into()
     }
 }
 
@@ -153,9 +172,14 @@ mod tests {
     use super::*;
 
     macro_rules! assert_munge {
-        ($input:expr, $want:expr) => {
+        ($input:expr, $prefix:expr, $want:expr) => {
             assert_eq!(
-                munge_raw_path(Path::new(OsStr::from_bytes($input))),
+                munge_raw_path(
+                    Path::new(OsStr::from_bytes($input)),
+                    $prefix
+                        .map(|prefix| OsString::from(OsStr::from_bytes(prefix)))
+                        .as_ref()
+                ),
                 OsString::from(OsStr::from_bytes($want))
             )
         };
@@ -164,26 +188,34 @@ mod tests {
     #[test]
     fn test_munge_raw_path() {
         // Basic relative and absolute cases with ,v suffixes.
-        assert_munge!(b"foo", b"foo");
-        assert_munge!(b"foo,v", b"foo");
-        assert_munge!(b"foo/bar", b"foo/bar");
-        assert_munge!(b"/foo", b"/foo");
-        assert_munge!(b"/foo,v", b"/foo");
-        assert_munge!(b"/foo/bar,v", b"/foo/bar");
-        assert_munge!(b"/foo/Attic/bar", b"/foo/bar");
+        assert_munge!(b"foo", None, b"foo");
+        assert_munge!(b"foo,v", None, b"foo");
+        assert_munge!(b"foo/bar", None, b"foo/bar");
+        assert_munge!(b"/foo", None, b"/foo");
+        assert_munge!(b"/foo,v", None, b"/foo");
+        assert_munge!(b"/foo/bar,v", None, b"/foo/bar");
+        assert_munge!(b"/foo/Attic/bar", None, b"/foo/bar");
 
         // Basic Attic cases.
-        assert_munge!(b"foo/Attic/bar", b"foo/bar");
-        assert_munge!(b"foo/Attic/bar,v", b"foo/bar");
-        assert_munge!(b"/foo/Attic/bar", b"/foo/bar");
-        assert_munge!(b"/foo/Attic/bar,v", b"/foo/bar");
+        assert_munge!(b"foo/Attic/bar", None, b"foo/bar");
+        assert_munge!(b"foo/Attic/bar,v", None, b"foo/bar");
+        assert_munge!(b"/foo/Attic/bar", None, b"/foo/bar");
+        assert_munge!(b"/foo/Attic/bar,v", None, b"/foo/bar");
 
         // Non-standard Attic cases where it shouldn't be stripped.
-        assert_munge!(b"Attic", b"Attic");
-        assert_munge!(b"Attic,v", b"Attic");
-        assert_munge!(b"foo/Attic", b"foo/Attic");
-        assert_munge!(b"/foo/Attic", b"/foo/Attic");
-        assert_munge!(b"Attic/Attic/Attic/foo/bar,v", b"Attic/Attic/Attic/foo/bar");
-        assert_munge!(b"/Attic/Attic/foo,v", b"/Attic/foo");
+        assert_munge!(b"Attic", None, b"Attic");
+        assert_munge!(b"Attic,v", None, b"Attic");
+        assert_munge!(b"foo/Attic", None, b"foo/Attic");
+        assert_munge!(b"/foo/Attic", None, b"/foo/Attic");
+        assert_munge!(
+            b"Attic/Attic/Attic/foo/bar,v",
+            None,
+            b"Attic/Attic/Attic/foo/bar"
+        );
+        assert_munge!(b"/Attic/Attic/foo,v", None, b"/Attic/foo");
+
+        // Prefix stripping.
+        assert_munge!(b"/foo/bar/Attic/quux,v", Some(b"/foo/bar"), b"quux");
+        assert_munge!(b"/foo/bar/quux,v", Some(b"/bar"), b"/foo/bar/quux");
     }
 }

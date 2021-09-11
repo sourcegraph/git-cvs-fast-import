@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io::{self, BufRead, BufReader},
     os::unix::prelude::OsStrExt,
     time::Duration,
@@ -15,6 +15,9 @@ mod discovery;
 mod output;
 
 #[derive(Debug, StructOpt)]
+#[structopt(
+    about = "An exporter for CVS repositories into the git fast-import format. Provide a list of files to parse on STDIN, and a git fast-import stream will be output on STDOUT."
+)]
 struct Opt {
     #[structopt(
         short,
@@ -27,6 +30,14 @@ struct Opt {
 
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
+
+    #[structopt(
+        short,
+        long,
+        parse(from_os_str),
+        help = "prefix to strip from incoming paths when creating files in the output repository"
+    )]
+    prefix: Option<OsString>,
 }
 
 #[tokio::main]
@@ -67,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
         &output,
         &commit_stream,
         opt.jobs.unwrap_or_else(|| num_cpus::get()),
+        match &opt.prefix {
+            Some(pfx) => Some(pfx.as_os_str()),
+            None => None,
+        },
     );
 
     for r in BufReader::new(io::stdin()).split(b'\n').into_iter() {
