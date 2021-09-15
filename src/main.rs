@@ -8,7 +8,6 @@ use std::{
 use discovery::Discovery;
 
 use structopt::StructOpt;
-use tokio::task;
 
 mod discovery;
 mod observer;
@@ -105,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     drop(observer);
 
     let mut from = None;
-    for patch_set in collector.await??.into_patchset_iter() {
+    for patch_set in collector.await??.patchset_iter().unwrap() {
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
         builder
             .committer(git_fast_import::Identity::new(

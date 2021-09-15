@@ -1,8 +1,8 @@
-//! Patchset detection based on a stream of file commits.
+//! Patchset detection based  time: (), author, message, files: ()  time: (), author, message, files: ()  time: (), author, message, files: () on a stream of file commits.
 
 use std::{
     borrow::Borrow,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     ffi::{OsStr, OsString},
     fmt::Debug,
     hash::Hash,
@@ -110,10 +110,10 @@ where
         }
     }
 
-    /// Consumes the detector and returns an iterator that yields the detected
-    /// patchsets in ascending time order.
-    pub fn into_patchset_iter(self) -> impl Iterator<Item = PatchSet<ID>> {
-        let mut patchsets = BinaryHeap::new_min();
+    /// Consumes the detector and returns the detected patchsets in ascending
+    /// time order.
+    pub fn into_patchsets(self) -> BTreeSet<PatchSet<ID>> {
+        let mut patchsets = BTreeSet::new();
 
         for (key, commits) in self.file_commits.into_iter() {
             let mut last = None;
@@ -123,7 +123,7 @@ where
             for commit in commits.into_iter_sorted() {
                 if let Some(last) = last {
                     if commit.time.duration_since(last).unwrap_or_default() > self.delta {
-                        patchsets.push(PatchSet {
+                        patchsets.insert(PatchSet {
                             time: last,
                             author: key.author.clone(),
                             message: key.message.clone(),
@@ -145,7 +145,7 @@ where
             }
 
             if !pending_files.is_empty() {
-                patchsets.push(PatchSet {
+                patchsets.insert(PatchSet {
                     time: last.unwrap(),
                     author: key.author.clone(),
                     message: key.message.clone(),
@@ -154,7 +154,7 @@ where
             }
         }
 
-        patchsets.into_iter_sorted()
+        patchsets
     }
 }
 
@@ -172,6 +172,20 @@ where
     pub author: String,
     pub message: String,
     pub files: HashMap<OsString, Option<ID>>,
+}
+
+impl<ID> Default for PatchSet<ID>
+where
+    ID: Debug + Clone + Eq,
+{
+    fn default() -> Self {
+        Self {
+            time: SystemTime::UNIX_EPOCH,
+            author: Default::default(),
+            message: Default::default(),
+            files: Default::default(),
+        }
+    }
 }
 
 impl<ID> Ord for PatchSet<ID>
@@ -247,12 +261,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{iter::FromIterator, str::FromStr};
 
     use super::*;
 
     #[test]
-    fn it_works() {
+    fn test_detector() {
         let mut detector = Detector::new(Duration::from_secs(120));
         let branches = vec![String::from("branches")];
 
@@ -308,9 +322,28 @@ mod tests {
             timestamp(120),
         );
 
-        dbg!(detector
-            .into_patchset_iter()
-            .collect::<Vec<PatchSet<i32>>>());
+        let have: Vec<PatchSet<i32>> = detector.into_patchsets().into_iter().collect();
+        let want: Vec<PatchSet<i32>> = vec![
+            PatchSet {
+                time: timestamp(90),
+                author: author.clone(),
+                message: String::from("this is a different message"),
+                files: HashMap::from_iter([(path("bar"), Some(3))]),
+            },
+            PatchSet {
+                time: timestamp(120),
+                author: author.clone(),
+                message: String::from("message in a bottle"),
+                files: HashMap::from_iter([(path("foo"), Some(4)), (path("bar"), Some(2))]),
+            },
+            PatchSet {
+                time: timestamp(300),
+                author: author.clone(),
+                message: String::from("message in a bottle"),
+                files: HashMap::from_iter([(path("foo"), None)]),
+            },
+        ];
+        assert_eq!(have, want);
     }
 
     fn path(s: &str) -> OsString {
