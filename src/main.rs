@@ -135,8 +135,8 @@ async fn main() -> anyhow::Result<()> {
         from = Some(output.commit(builder.build()?).await?);
     }
 
-    // We need to ensure all references to output are done before worker will
-    // finish up.
+    // We need to ensure all references to output are done before the output
+    // handle will finish up.
     drop(output);
 
     // And now we wait.

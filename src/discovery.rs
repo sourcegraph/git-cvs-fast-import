@@ -72,6 +72,12 @@ async fn handle_path(
     let disp = path.to_string_lossy();
     let real_path = munge_raw_path(Path::new(path), prefix);
 
+    // Send tag information, if any.
+    if !cv.admin.symbols.is_empty() {
+        log::trace!("{}: found {} tag(s)", disp, cv.admin.symbols.len());
+        observer.file_tags(&real_path, &cv.admin.symbols)?;
+    }
+
     // Start at the head and work our way down.
     let head_num = match cv.head() {
         Some(num) => num,
@@ -116,7 +122,7 @@ async fn handle_file_version(
         _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
     };
 
-    observer.commit(real_path, mark, delta, delta_text).await?;
+    observer.commit(real_path, mark, delta, delta_text)?;
     Ok(mark)
 }
 
