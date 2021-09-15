@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let mut stdout = io::stdout();
     for line in file.apply(&commands)? {
         stdout.write_all(&line)?;
-        stdout.write(b"\n")?;
+        stdout.write_all(b"\n")?;
     }
 
     Ok(())

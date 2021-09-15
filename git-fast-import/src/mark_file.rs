@@ -29,23 +29,24 @@ pub(crate) fn get_last_mark<R>(reader: R) -> Result<Option<Mark>, Error>
 where
     R: Read + Seek,
 {
-    for line in RevLines::new(BufReader::new(reader))?.into_iter() {
-        if line.len() > 0 {
-            return Ok(Some(
-                Finish::finish(mark_line(&line))
-                    .map_err(|e| Error::MarkParsingError(e.code))?
-                    .1,
-            ));
-        }
+    if let Some(line) = RevLines::new(BufReader::new(reader))?
+        .into_iter()
+        .find(|line| !line.is_empty())
+    {
+        Ok(Some(
+            Finish::finish(mark_line(&line))
+                .map_err(|e| Error::MarkParsingError(e.code))?
+                .1,
+        ))
+    } else {
+        Ok(None)
     }
-
-    Ok(None)
 }
 
 fn mark_line(input: &str) -> IResult<&str, Mark> {
     map_res(
         terminated(delimited(tag(":"), digit1, multispace1), alphanumeric1),
-        |raw| -> Result<Mark, ParseIntError> { Ok(Mark::from_str(raw)?) },
+        |raw| -> Result<Mark, ParseIntError> { Mark::from_str(raw) },
     )(input)
 }
 

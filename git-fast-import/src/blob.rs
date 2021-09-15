@@ -17,8 +17,8 @@ impl Blob {
 
 impl Command for Blob {
     fn write(&self, writer: &mut impl std::io::Write, mark: crate::Mark) -> anyhow::Result<()> {
-        write!(writer, "blob\nmark {}\ndata {}\n", mark, self.data.len())?;
+        writeln!(writer, "blob\nmark {}\ndata {}", mark, self.data.len())?;
         writer.write_all(&self.data)?;
-        Ok(write!(writer, "\n")?)
+        Ok(writeln!(writer)?)
     }
 }

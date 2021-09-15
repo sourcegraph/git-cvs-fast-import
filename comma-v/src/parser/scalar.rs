@@ -30,7 +30,7 @@ pub(super) fn id(input: &[u8]) -> IResult<&[u8], types::Id> {
 }
 
 pub(super) fn numlike(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take_while1(|c| c == b'.' || (c >= b'0' && c <= b'9'))(input)
+    take_while1(|c| c == b'.' || (b'0'..=b'9').contains(&c))(input)
 }
 
 pub(super) fn num(input: &[u8]) -> IResult<&[u8], types::Num> {
@@ -59,7 +59,7 @@ pub(super) fn string(input: &[u8]) -> IResult<&[u8], types::VString> {
             ),
             tag(b"@"),
         ),
-        |bytes| types::VString(bytes),
+        types::VString,
     )(input)
 }
 

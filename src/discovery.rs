@@ -30,7 +30,7 @@ impl Discovery {
             let local_rx = rx.clone();
             let local_commit = commit.clone();
             let local_output = output.clone();
-            let local_prefix = prefix.map(|prefix| OsString::from(prefix));
+            let local_prefix = prefix.map(OsString::from);
 
             task::spawn(async move {
                 loop {
@@ -73,37 +73,31 @@ async fn handle_path(
     let real_path = munge_raw_path(Path::new(path), prefix);
 
     // Start at the head and work our way down.
-    let num = match cv.head() {
+    let head_num = match cv.head() {
         Some(num) => num,
         None => anyhow::bail!("{}: cannot find HEAD revision", disp),
     };
-    let (mut delta, mut delta_text) = cv.revision(num).unwrap();
-    log::trace!("{}: found HEAD revision {}", disp, num);
+    let (mut delta, mut delta_text) = cv.revision(head_num).unwrap();
+    log::trace!("{}: found HEAD revision {}", disp, head_num);
     let mut file = File::new(delta_text.text.as_cursor())?;
 
     let mark = handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
     log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
 
-    loop {
+    while let Some(next_num) = &delta.next {
         // TODO: handle branches and tags.
-        let num = match &delta.next {
-            Some(next) => next,
-            None => {
-                break;
-            }
-        };
-        let rev = cv.revision(num).unwrap();
+        let rev = cv.revision(next_num).unwrap();
         delta = rev.0;
         delta_text = rev.1;
 
-        log::trace!("{}: iterated to {}", &disp, num);
+        log::trace!("{}: iterated to {}", &disp, next_num);
 
         let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
         file.apply_in_place(&commands)?;
 
         let mark =
             handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
-        log::trace!("{}: wrote {} to mark {:?}", disp, num, mark);
+        log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
     }
 
     Ok(())
@@ -122,7 +116,7 @@ async fn handle_file_version(
         _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
     };
 
-    commit.observe(&real_path, mark, delta, delta_text).await?;
+    commit.observe(real_path, mark, delta, delta_text).await?;
     Ok(mark)
 }
 

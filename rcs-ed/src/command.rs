@@ -28,7 +28,7 @@ impl Command {
     pub(crate) fn parse(line: &[u8]) -> Result<Self, Error> {
         Ok(Finish::finish(command(line))
             .map_err(|e| {
-                if e.input.len() == 0 {
+                if e.input.is_empty() {
                     Error::NoCommand
                 } else {
                     Error::InvalidCommand(String::from_utf8_lossy(e.input).to_string())

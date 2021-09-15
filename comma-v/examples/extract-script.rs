@@ -19,7 +19,7 @@ struct Opt {
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
 
-    let revision: Vec<u8> = opt.revision.as_bytes().into_iter().cloned().collect();
+    let revision: Vec<u8> = opt.revision.as_bytes().to_vec();
     let file = comma_v::parse(&fs::read(&opt.file)?)?;
     match file.delta_text.get(&Num::from(revision)) {
         Some(dt) => {

@@ -23,9 +23,9 @@ impl Tag {
 
 impl Command for Tag {
     fn write(&self, writer: &mut impl std::io::Write, mark: Mark) -> anyhow::Result<()> {
-        Ok(write!(
+        Ok(writeln!(
             writer,
-            "tag {}\nmark {}\nfrom {}\ntagger {}\ndata {}\n{}\n",
+            "tag {}\nmark {}\nfrom {}\ntagger {}\ndata {}\n{}",
             self.name,
             mark,
             self.from,

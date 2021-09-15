@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     let discovery = Discovery::new(
         &output,
         &commit_stream,
-        opt.jobs.unwrap_or_else(|| num_cpus::get()),
+        opt.jobs.unwrap_or_else(num_cpus::get),
         match &opt.prefix {
             Some(pfx) => Some(pfx.as_os_str()),
             None => None,
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
             match mark {
                 Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
-                    mark: mark,
+                    mark,
                     path: path.to_string_lossy().into(),
                 }),
                 None => builder.add_file_command(git_fast_import::FileCommand::Delete {
@@ -140,5 +140,5 @@ async fn main() -> anyhow::Result<()> {
     drop(output);
 
     // And now we wait.
-    Ok(worker.await??)
+    worker.await?
 }

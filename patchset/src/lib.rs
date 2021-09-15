@@ -83,16 +83,16 @@ where
         path: &OsStr,
         id: Option<&ID>,
         branches: I,
-        author: &String,
-        message: &String,
+        author: &str,
+        message: &str,
         time: SystemTime,
     ) where
         I: IntoIterator,
         I::Item: Borrow<String>,
     {
         let key = CommitKey {
-            author: author.clone(),
-            message: message.clone(),
+            author: author.to_string(),
+            message: message.to_string(),
         };
         let value = Commit {
             path: OsString::from(path),
@@ -144,7 +144,7 @@ where
                 pending_files.insert(commit.path, commit.id);
             }
 
-            if pending_files.len() > 0 {
+            if !pending_files.is_empty() {
                 patchsets.push(PatchSet {
                     time: last.unwrap(),
                     author: key.author.clone(),

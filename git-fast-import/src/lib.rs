@@ -44,11 +44,11 @@ where
     /// Note that `writer` must be ready to receive commands immediately, as
     /// `feature` commands will be sent to configure the receiver.
     pub fn new(writer: W) -> anyhow::Result<Self> {
-        Ok(Self {
+        Self {
             writer,
             next_mark: 1,
         }
-        .send_generic_header()?)
+        .send_generic_header()
     }
 
     /// Constructs a new git-fast-import writer that wraps the given writer with
@@ -60,7 +60,7 @@ where
     where
         P: AsRef<Path>,
     {
-        Ok(Self {
+        Self {
             writer,
             // The mark file doesn't have to exist, so we'll fall back to the
             // default initial mark of 1 if we can't open it.
@@ -72,7 +72,7 @@ where
             },
         }
         .send_generic_header()?
-        .send_mark_header(mark_file)?)
+        .send_mark_header(mark_file)
     }
 
     /// Sends a command that returns a mark to fast-import.
@@ -89,19 +89,19 @@ where
 
     /// Sends a `checkpoint` command to fast-import.
     pub fn checkpoint(&mut self) -> anyhow::Result<()> {
-        Ok(write!(self.writer, "checkpoint\n")?)
+        Ok(writeln!(self.writer, "checkpoint")?)
     }
 
     /// Sends a `progress` command to fast-import.
-    pub fn progress(&mut self, message: &String) -> anyhow::Result<()> {
-        Ok(write!(self.writer, "progress {}\n", message)?)
+    pub fn progress(&mut self, message: &str) -> anyhow::Result<()> {
+        Ok(writeln!(self.writer, "progress {}", message)?)
     }
 
     /// Sends a `reset` command to fast-import.
-    pub fn reset(&mut self, branch_ref: &String, from: Option<Mark>) -> anyhow::Result<()> {
-        write!(self.writer, "reset {}\n", branch_ref)?;
+    pub fn reset(&mut self, branch_ref: &str, from: Option<Mark>) -> anyhow::Result<()> {
+        writeln!(self.writer, "reset {}", branch_ref)?;
         if let Some(from) = from {
-            write!(self.writer, "from {}\n", from)?;
+            writeln!(self.writer, "from {}", from)?;
         }
 
         Ok(())
@@ -113,8 +113,8 @@ where
     }
 
     fn send_generic_header(mut self) -> anyhow::Result<Self> {
-        write!(self.writer, "feature done\n")?;
-        write!(self.writer, "feature date-format=raw\n")?;
+        writeln!(self.writer, "feature done")?;
+        writeln!(self.writer, "feature date-format=raw")?;
 
         Ok(self)
     }
@@ -125,8 +125,8 @@ where
     {
         let path = mark_file.as_ref().to_string_lossy();
 
-        write!(self.writer, "feature import-marks-if-exists={}\n", path,)?;
-        write!(self.writer, "feature export-marks={}\n", path,)?;
+        writeln!(self.writer, "feature import-marks-if-exists={}", path,)?;
+        writeln!(self.writer, "feature export-marks={}", path,)?;
 
         Ok(self)
     }
@@ -137,7 +137,7 @@ where
     W: Write + Debug,
 {
     fn drop(&mut self) {
-        write!(self.writer, "done\n").unwrap();
+        writeln!(self.writer, "done").unwrap();
     }
 }
 
@@ -145,12 +145,4 @@ where
 pub trait Command {
     /// A function that writes the command in wire format to the given writer.
     fn write(&self, writer: &mut impl Write, mark: Mark) -> anyhow::Result<()>;
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
 }

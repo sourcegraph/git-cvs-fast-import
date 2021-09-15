@@ -7,7 +7,7 @@ use thiserror::Error;
 mod command;
 
 mod script;
-pub use script::{Command, CommandList, Script};
+pub use script::{Command, Script};
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -36,7 +36,7 @@ impl File {
             let mut line = Vec::new();
             r.read_until(b'\n', &mut line)?;
 
-            if line.len() == 0 {
+            if line.is_empty() {
                 // Special case: last line of the file, and it's empty.
                 lines.push(b"".to_vec());
                 break;
@@ -55,12 +55,11 @@ impl File {
         Ok(Self { lines })
     }
 
-    pub fn apply(&self, commands: &CommandList) -> anyhow::Result<Vec<Vec<u8>>> {
-        Ok(LineCommands::calculate(self.lines.len(), commands)?
-            .apply(self.lines.iter().cloned().collect())?)
+    pub fn apply(&self, commands: &[Command]) -> anyhow::Result<Vec<Vec<u8>>> {
+        LineCommands::calculate(self.lines.len(), commands)?.apply(self.lines.to_vec())
     }
 
-    pub fn apply_in_place(&mut self, commands: &CommandList) -> anyhow::Result<()> {
+    pub fn apply_in_place(&mut self, commands: &[Command]) -> anyhow::Result<()> {
         let input = mem::take(&mut self.lines);
         self.lines = LineCommands::calculate(input.len(), commands)?.apply(input)?;
 
@@ -109,7 +108,7 @@ impl<'a> LineCommands<'a> {
         Ok(output)
     }
 
-    fn calculate(n: usize, commands: &'a CommandList) -> Result<Self, LineCommandError> {
+    fn calculate(n: usize, commands: &'a [Command]) -> Result<Self, LineCommandError> {
         let mut line_commands = LineCommands {
             lines: vec![Line::Keep; n],
             prepend: Vec::new(),
@@ -140,7 +139,7 @@ impl<'a> LineCommands<'a> {
                     content,
                 } => {
                     // Special case: insert at the start of the commands.
-                    if line_commands.prepend.len() > 0 {
+                    if !line_commands.prepend.is_empty() {
                         return Err(LineCommandError::ConflictingAppends(0));
                     }
 

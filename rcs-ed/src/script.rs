@@ -24,8 +24,6 @@ pub enum Command {
     },
 }
 
-pub type CommandList = Vec<Command>;
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("command parsing error on line {line}: {error}")]
@@ -49,7 +47,7 @@ impl<R: Read> Script<R> {
         }
     }
 
-    pub fn into_command_list(self) -> Result<CommandList, Error> {
+    pub fn into_command_list(self) -> Result<Vec<Command>, Error> {
         self.into_iter().collect()
     }
 }

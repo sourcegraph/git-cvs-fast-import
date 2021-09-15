@@ -1,5 +1,5 @@
 pub(super) fn is_printable_ascii(c: u8) -> bool {
-    c >= 0x20 && c < 0x7f
+    (0x20..0x7f).contains(&c)
 }
 
 pub(super) fn is_printable_ascii_without<const N: usize>(c: u8, exclude: &[u8; N]) -> bool {

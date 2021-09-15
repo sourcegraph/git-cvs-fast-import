@@ -21,21 +21,21 @@ impl Command for Commit {
     fn write(&self, writer: &mut impl io::Write, mark: Mark) -> anyhow::Result<()> {
         // Build up a buffer and then write.
         let mut buf = String::new();
-        write!(buf, "commit {}\n", self.branch_ref)?;
-        write!(buf, "mark {}\n", mark)?;
+        writeln!(buf, "commit {}", self.branch_ref)?;
+        writeln!(buf, "mark {}", mark)?;
         if let Some(author) = &self.author {
-            write!(buf, "author {}\n", author)?;
+            writeln!(buf, "author {}", author)?;
         }
-        write!(buf, "committer {}\n", self.committer)?;
-        write!(buf, "data {}\n{}\n", self.message.len(), self.message)?;
+        writeln!(buf, "committer {}", self.committer)?;
+        writeln!(buf, "data {}\n{}", self.message.len(), self.message)?;
         if let Some(from) = &self.from {
-            write!(buf, "from {}\n", from)?;
+            writeln!(buf, "from {}", from)?;
         }
         if let Some(merge) = &self.merge {
-            write!(buf, "merge {}\n", merge)?;
+            writeln!(buf, "merge {}", merge)?;
         }
         for command in self.commands.iter() {
-            write!(buf, "{}\n", command)?;
+            writeln!(buf, "{}", command)?;
         }
 
         Ok(write!(writer, "{}", buf)?)
