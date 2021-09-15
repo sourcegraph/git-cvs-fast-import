@@ -6,15 +6,18 @@ use std::{
 use comma_v::{Delta, DeltaText};
 use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
-use tokio::sync::mpsc;
+use tokio::{
+    sync::mpsc,
+    task::{self, JoinHandle},
+};
 
 #[derive(Clone, Debug)]
-pub(crate) struct Commit {
+pub(crate) struct Observer {
     tx: mpsc::UnboundedSender<Message>,
 }
 
 #[derive(Debug)]
-pub(crate) struct Worker {
+pub(crate) struct Collector {
     rx: mpsc::UnboundedReceiver<Message>,
 }
 
@@ -28,14 +31,20 @@ struct Message {
     time: SystemTime,
 }
 
-pub(crate) fn new() -> (Commit, Worker) {
+/// Constructs a new commit observer, along with a collector that can be awaited
+/// once the observer has been dropped to receive the final result of the
+/// observations.
+pub(crate) fn new(delta: Duration) -> (Observer, JoinHandle<anyhow::Result<Detector<Mark>>>) {
     let (tx, rx) = mpsc::unbounded_channel();
 
-    (Commit { tx }, Worker { rx })
+    (
+        Observer { tx },
+        task::spawn(async move { Collector { rx }.join(delta).await }),
+    )
 }
 
-impl Commit {
-    pub(crate) async fn observe(
+impl Observer {
+    pub(crate) async fn commit(
         &self,
         path: &OsStr,
         id: Option<Mark>,
@@ -52,11 +61,8 @@ impl Commit {
     }
 }
 
-impl Worker {
-    pub(crate) async fn join(
-        mut self,
-        delta: Duration,
-    ) -> anyhow::Result<impl Iterator<Item = PatchSet<Mark>>> {
+impl Collector {
+    pub(crate) async fn join(mut self, delta: Duration) -> anyhow::Result<Detector<Mark>> {
         let mut detector = Detector::new(delta);
 
         while let Some(message) = self.rx.recv().await {
@@ -70,6 +76,6 @@ impl Worker {
             );
         }
 
-        Ok(detector.into_patchset_iter())
+        Ok(detector)
     }
 }

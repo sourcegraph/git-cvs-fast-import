@@ -6,9 +6,12 @@ use std::{
 
 use git_fast_import::{Mark, Writer};
 use thiserror::Error;
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    oneshot,
+use tokio::{
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    task::{self, JoinHandle},
 };
 
 #[derive(Debug, Clone)]
@@ -16,30 +19,19 @@ pub(crate) struct Output {
     tx: UnboundedSender<Command>,
 }
 
-#[derive(Debug)]
-pub(crate) struct Worker<W>
-where
-    W: Debug + Write + Send,
-{
-    w: W,
-    rx: UnboundedReceiver<Command>,
-    mark_file: Option<PathBuf>,
-}
-
-pub(crate) fn new<P, W>(w: W, mark_file: Option<P>) -> (Output, Worker<W>)
+/// Constructs a new output object, and returns it along with a join handle that
+/// must be awaited to ensure all output has been written.
+pub(crate) fn new<P, W>(w: W, mark_file: Option<P>) -> (Output, JoinHandle<anyhow::Result<()>>)
 where
     P: AsRef<Path>,
-    W: Debug + Write + Send,
+    W: Debug + Write + Send + 'static,
 {
     let (tx, rx) = unbounded_channel();
+    let mark_file = mark_file.map(|path| path.as_ref().to_path_buf());
 
     (
         Output { tx },
-        Worker {
-            w,
-            rx,
-            mark_file: mark_file.map(|path| PathBuf::from(path.as_ref())),
-        },
+        task::spawn(async move { worker(w, rx, mark_file).await }),
     )
 }
 
@@ -61,47 +53,51 @@ impl Output {
         })?;
         Ok(rx.await?)
     }
+
+    // TODO: extend with other types we need to send.
 }
 
-impl<W> Worker<W>
+async fn worker<W>(
+    mut w: W,
+    mut rx: UnboundedReceiver<Command>,
+    mark_file: Option<PathBuf>,
+) -> anyhow::Result<()>
 where
-    W: Debug + Write + Send,
+    W: Debug + Write,
 {
-    pub(crate) async fn join(&mut self) -> anyhow::Result<()> {
-        let mut client = match &self.mark_file {
-            Some(mark_file) => Writer::new_with_mark_file(&mut self.w, mark_file)?,
-            None => Writer::new(&mut self.w)?,
-        };
-        let handle_send_result = |r| match r {
-            Ok(_) => Ok(()),
-            Err(mark) => Err(Error::MarkSendFailed(mark)),
-        };
+    let mut client = match &mark_file {
+        Some(mark_file) => Writer::new_with_mark_file(&mut w, mark_file)?,
+        None => Writer::new(&mut w)?,
+    };
+    let handle_send_result = |r| match r {
+        Ok(_) => Ok(()),
+        Err(mark) => Err(Error::MarkSendFailed(mark)),
+    };
 
-        while let Some(command) = self.rx.recv().await {
-            match command {
-                Command::Blob(blob, tx) => {
-                    handle_send_result(tx.send(client.command(blob)?))?;
-                }
-                Command::Checkpoint => {
-                    client.checkpoint()?;
-                }
-                Command::Commit(commit, tx) => {
-                    handle_send_result(tx.send(client.command(commit)?))?;
-                }
-                Command::Progress(message) => {
-                    client.progress(&message)?;
-                }
-                Command::Reset { branch_ref, from } => {
-                    client.reset(&branch_ref, from)?;
-                }
-                Command::Tag(tag, tx) => {
-                    handle_send_result(tx.send(client.command(tag)?))?;
-                }
+    while let Some(command) = rx.recv().await {
+        match command {
+            Command::Blob(blob, tx) => {
+                handle_send_result(tx.send(client.command(blob)?))?;
+            }
+            Command::Checkpoint => {
+                client.checkpoint()?;
+            }
+            Command::Commit(commit, tx) => {
+                handle_send_result(tx.send(client.command(commit)?))?;
+            }
+            Command::Progress(message) => {
+                client.progress(&message)?;
+            }
+            Command::Reset { branch_ref, from } => {
+                client.reset(&branch_ref, from)?;
+            }
+            Command::Tag(tag, tx) => {
+                handle_send_result(tx.send(client.command(tag)?))?;
             }
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 type MarkSender = oneshot::Sender<Mark>;

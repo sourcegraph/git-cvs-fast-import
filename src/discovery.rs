@@ -10,7 +10,7 @@ use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
 
-use crate::{commit, output::Output};
+use crate::{observer, output::Output};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Discovery {
@@ -20,7 +20,7 @@ pub(crate) struct Discovery {
 impl Discovery {
     pub fn new(
         output: &Output,
-        commit: &commit::Commit,
+        observer: &observer::Observer,
         jobs: usize,
         prefix: Option<&OsStr>,
     ) -> Self {
@@ -28,7 +28,7 @@ impl Discovery {
 
         for _i in 0..jobs {
             let local_rx = rx.clone();
-            let local_commit = commit.clone();
+            let local_commit = observer.clone();
             let local_output = output.clone();
             let local_prefix = prefix.map(OsString::from);
 
@@ -64,7 +64,7 @@ impl Discovery {
 
 async fn handle_path(
     output: &Output,
-    commit: &commit::Commit,
+    observer: &observer::Observer,
     path: &OsStr,
     prefix: Option<&OsString>,
 ) -> anyhow::Result<()> {
@@ -81,7 +81,7 @@ async fn handle_path(
     log::trace!("{}: found HEAD revision {}", disp, head_num);
     let mut file = File::new(delta_text.text.as_cursor())?;
 
-    let mark = handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
+    let mark = handle_file_version(output, observer, &file, delta, delta_text, &real_path).await?;
     log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
 
     while let Some(next_num) = &delta.next {
@@ -96,7 +96,7 @@ async fn handle_path(
         file.apply_in_place(&commands)?;
 
         let mark =
-            handle_file_version(output, commit, &file, delta, delta_text, &real_path).await?;
+            handle_file_version(output, observer, &file, delta, delta_text, &real_path).await?;
         log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
     }
 
@@ -105,7 +105,7 @@ async fn handle_path(
 
 async fn handle_file_version(
     output: &Output,
-    commit: &commit::Commit,
+    observer: &observer::Observer,
     file: &File,
     delta: &Delta,
     delta_text: &DeltaText,
@@ -116,7 +116,7 @@ async fn handle_file_version(
         _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
     };
 
-    commit.observe(real_path, mark, delta, delta_text).await?;
+    observer.commit(real_path, mark, delta, delta_text).await?;
     Ok(mark)
 }
 

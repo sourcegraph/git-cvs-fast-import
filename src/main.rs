@@ -10,8 +10,8 @@ use discovery::Discovery;
 use structopt::StructOpt;
 use tokio::task;
 
-mod commit;
 mod discovery;
+mod observer;
 mod output;
 
 #[derive(Debug, StructOpt)]
@@ -69,19 +69,15 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     pretty_env_logger::init();
 
-    // Set up our git-fast-import export. Note that we need to immediately spawn
-    // the worker onto a new task, but we'll join it later.
-    let (output, mut worker) = output::new(io::stdout(), opt.mark_file.as_ref());
-    let worker = task::spawn(async move { worker.join().await });
+    // Set up our git-fast-import export.
+    let (output, output_handle) = output::new(io::stdout(), opt.mark_file.as_ref());
 
-    let (commit_stream, commit_worker) = commit::new();
-    let delta = opt.delta;
-    let commit_worker = task::spawn(async move { commit_worker.join(delta).await });
+    let (observer, collector) = observer::new(opt.delta);
 
     // Set up our file discovery.
     let discovery = Discovery::new(
         &output,
-        &commit_stream,
+        &observer,
         opt.jobs.unwrap_or_else(num_cpus::get),
         match &opt.prefix {
             Some(pfx) => Some(pfx.as_os_str()),
@@ -100,12 +96,16 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    drop(discovery);
 
+    // We're done with discovery, so we can drop the input halves of the objects
+    // that won't be receiving any further data, which will trigger their
+    // workers to end.
     log::trace!("discovery phase done; getting patchsets");
-    drop(commit_stream);
+    drop(discovery);
+    drop(observer);
+
     let mut from = None;
-    for patch_set in commit_worker.await?? {
+    for patch_set in collector.await??.into_patchset_iter() {
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
         builder
             .committer(git_fast_import::Identity::new(
@@ -140,5 +140,5 @@ async fn main() -> anyhow::Result<()> {
     drop(output);
 
     // And now we wait.
-    worker.await?
+    output_handle.await?
 }
