@@ -7,3 +7,4 @@ edition = "2018"
 
 [dependencies]
 binary-heap-plus = "0.4.1"
+thiserror = "1.0.29"

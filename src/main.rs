@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
             builder.from(mark);
         }
 
-        for (path, mark) in patch_set.files.into_iter() {
+        for (path, mark) in patch_set.file_content_iter() {
             match mark {
                 Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,

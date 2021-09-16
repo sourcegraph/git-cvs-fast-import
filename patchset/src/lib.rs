@@ -11,6 +11,7 @@ use std::{
 };
 
 use binary_heap_plus::{BinaryHeap, MinComparator};
+use thiserror::Error;
 
 /// A `Detector` ingests a stream of file commits, and yields an iterator over
 /// the patchsets detected within those file commits.
@@ -134,14 +135,15 @@ where
 
                 last = Some(commit.time);
 
-                // This will overwrite a previous instance of this file in the
-                // commit, which is _probably_ what we want in all scenarios.
-                // Specifically, this could happen if multiple commits are made
-                // to the same file with the same author and message in rapid
-                // succession: we technically lose some history by doing this,
-                // but it provides a realistic approximation of the file history
-                // at lower cost.
-                pending_files.insert(commit.path, commit.id);
+                // Add the new state of the file to the pending files. This
+                // effectively overwrites previous versions of the file within
+                // the same patchset, but that's generally what we want: it's
+                // not an exact commit-for-commit representation, but should
+                // accurately reflect what the user really did.
+                pending_files
+                    .entry(commit.path)
+                    .or_insert_with(Vec::new)
+                    .push(commit.id);
             }
 
             if !pending_files.is_empty() {
@@ -161,8 +163,8 @@ where
 /// A `PatchSet` represents a single patchset detected by a [`Detector`].
 ///
 /// This contains the commit time, author, message, and the files that are
-/// modified by the patchset. If the file ID is `None`, then the file was
-/// deleted in this patchset.
+/// modified by the patchset, along with all file IDs that were squashed into
+/// the patchset.
 #[derive(Debug, Clone, Eq)]
 pub struct PatchSet<ID>
 where
@@ -171,7 +173,48 @@ where
     pub time: SystemTime,
     pub author: String,
     pub message: String,
-    pub files: HashMap<OsString, Option<ID>>,
+    files: HashMap<OsString, Vec<Option<ID>>>,
+}
+
+impl<ID> PatchSet<ID>
+where
+    ID: Debug + Clone + Eq,
+{
+    /// Returns the content ID for the given file. If the file is deleted in
+    /// this patchset, None is returned.
+    pub fn file_content(&self, file: &OsStr) -> Result<Option<&ID>, Error> {
+        match self.files.get(file) {
+            Some(ids) => Ok(Self::content(ids)),
+            None => Err(Error::file_not_found(file)),
+        }
+    }
+
+    /// Iterates over each file in the patchset, in arbitrary order, along with
+    /// the content ID for the file. If the file is deleted in the patchset, the
+    /// ID will be None.
+    pub fn file_content_iter(&self) -> impl Iterator<Item = (&OsString, Option<&ID>)> {
+        self.files
+            .iter()
+            .map(|(file, ids)| (file, Self::content(ids)))
+    }
+
+    /// Iterates over each file in the patchset, in arbitrary order, and
+    /// provides the file and a Vec of all the content IDs that were squashed
+    /// into the patchset for that file.
+    pub fn file_revision_iter(&self) -> impl Iterator<Item = (&OsString, &Vec<Option<ID>>)> {
+        self.files.iter()
+    }
+
+    /// Checks if the file is deleted in the patchset.
+    ///
+    /// In most cases, [`file_content()`] will be more useful.
+    pub fn is_deleted(&self, file: &OsStr) -> Result<bool, Error> {
+        Ok(self.file_content(file)?.is_none())
+    }
+
+    fn content(ids: &[Option<ID>]) -> Option<&ID> {
+        ids.last().map(|id| id.as_ref()).flatten()
+    }
 }
 
 impl<ID> Default for PatchSet<ID>
@@ -259,6 +302,18 @@ where
     }
 }
 
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("file does not exist: {0}")]
+    FileNotFound(String),
+}
+
+impl Error {
+    fn file_not_found(name: &OsStr) -> Self {
+        Self::FileNotFound(name.to_string_lossy().into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{iter::FromIterator, str::FromStr};
@@ -328,19 +383,22 @@ mod tests {
                 time: timestamp(90),
                 author: author.clone(),
                 message: String::from("this is a different message"),
-                files: HashMap::from_iter([(path("bar"), Some(3))]),
+                files: HashMap::from_iter([(path("bar"), [Some(3)].to_vec())]),
             },
             PatchSet {
                 time: timestamp(120),
                 author: author.clone(),
                 message: String::from("message in a bottle"),
-                files: HashMap::from_iter([(path("foo"), Some(4)), (path("bar"), Some(2))]),
+                files: HashMap::from_iter([
+                    (path("foo"), [Some(1), Some(4)].to_vec()),
+                    (path("bar"), [Some(2)].to_vec()),
+                ]),
             },
             PatchSet {
                 time: timestamp(300),
                 author: author.clone(),
                 message: String::from("message in a bottle"),
-                files: HashMap::from_iter([(path("foo"), None)]),
+                files: HashMap::from_iter([(path("foo"), [None].to_vec())]),
             },
         ];
         assert_eq!(have, want);
