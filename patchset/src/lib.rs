@@ -1,8 +1,7 @@
 //! Patchset detection based  time: (), author, message, files: ()  time: (), author, message, files: ()  time: (), author, message, files: () on a stream of file commits.
 
 use std::{
-    borrow::Borrow,
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     ffi::{OsStr, OsString},
     fmt::Debug,
     hash::Hash,
@@ -79,26 +78,22 @@ where
     /// responsibility of the caller to be able to map that back.
     ///
     /// If `id` is `None`, then this commit represents the file being deleted.
-    pub fn add_file_commit<I>(
+    pub fn add_file_commit<BI>(
         &mut self,
-        path: &OsStr,
-        id: Option<&ID>,
-        branches: I,
-        author: &str,
-        message: &str,
+        path: OsString,
+        id: Option<ID>,
+        branches: BI,
+        author: String,
+        message: String,
         time: SystemTime,
     ) where
-        I: IntoIterator,
-        I::Item: Borrow<String>,
+        BI: IntoIterator<Item = Vec<u8>>,
     {
-        let key = CommitKey {
-            author: author.to_string(),
-            message: message.to_string(),
-        };
+        let key = CommitKey { author, message };
         let value = Commit {
-            path: OsString::from(path),
-            branches: branches.into_iter().map(|s| s.borrow().clone()).collect(),
-            id: id.cloned(),
+            path,
+            branches: branches.into_iter().collect(),
+            id,
             time,
         };
 
@@ -111,10 +106,10 @@ where
         }
     }
 
-    /// Consumes the detector and returns the detected patchsets in ascending
-    /// time order.
-    pub fn into_patchsets(self) -> BTreeSet<PatchSet<ID>> {
-        let mut patchsets = BTreeSet::new();
+    /// Consumes the detector and returns a heap containing the detected
+    /// patchsets in ascending time order.
+    pub fn into_binary_heap(self) -> BinaryHeap<PatchSet<ID>, MinComparator> {
+        let mut patchsets = BinaryHeap::new_min();
 
         for (key, commits) in self.file_commits.into_iter() {
             let mut last = None;
@@ -124,7 +119,7 @@ where
             for commit in commits.into_iter_sorted() {
                 if let Some(last) = last {
                     if commit.time.duration_since(last).unwrap_or_default() > self.delta {
-                        patchsets.insert(PatchSet {
+                        patchsets.push(PatchSet {
                             time: last,
                             author: key.author.clone(),
                             message: key.message.clone(),
@@ -147,7 +142,7 @@ where
             }
 
             if !pending_files.is_empty() {
-                patchsets.insert(PatchSet {
+                patchsets.push(PatchSet {
                     time: last.unwrap(),
                     author: key.author.clone(),
                     message: key.message.clone(),
@@ -157,6 +152,12 @@ where
         }
 
         patchsets
+    }
+
+    /// Consumes the detector and returns the detected patchsets in ascending
+    /// time order.
+    pub fn into_patchset_iter(self) -> impl Iterator<Item = PatchSet<ID>> {
+        self.into_binary_heap().into_iter_sorted()
     }
 }
 
@@ -270,7 +271,7 @@ where
     ID: Debug + Clone + Eq,
 {
     path: OsString,
-    branches: Vec<String>,
+    branches: Vec<Vec<u8>>,
     id: Option<ID>,
     time: SystemTime,
 }
@@ -323,61 +324,61 @@ mod tests {
     #[test]
     fn test_detector() {
         let mut detector = Detector::new(Duration::from_secs(120));
-        let branches = vec![String::from("branches")];
+        let branches = vec![b"HEAD".to_vec()];
 
         // Add two files on the same commit.
         let author = String::from("author");
         let message = String::from("message in a bottle");
 
         detector.add_file_commit(
-            &path("foo"),
-            Some(&1),
-            &branches,
-            &author,
-            &message,
+            path("foo"),
+            Some(1),
+            branches.clone(),
+            author.clone(),
+            message.clone(),
             timestamp(100),
         );
 
         detector.add_file_commit(
-            &path("bar"),
-            Some(&2),
-            &branches,
-            &author,
-            &message,
+            path("bar"),
+            Some(2),
+            branches.clone(),
+            author.clone(),
+            message.clone(),
             timestamp(101),
         );
 
         // Delete foo on a new commit.
         detector.add_file_commit(
-            &path("foo"),
+            path("foo"),
             None,
-            &branches,
-            &author,
-            &message,
+            branches.clone(),
+            author.clone(),
+            message.clone(),
             timestamp(300),
         );
 
         // Add a file on a separate commit.
         detector.add_file_commit(
-            &path("bar"),
-            Some(&3),
-            &branches,
-            &author,
-            &String::from("this is a different message"),
+            path("bar"),
+            Some(3),
+            branches.clone(),
+            author.clone(),
+            String::from("this is a different message"),
             timestamp(90),
         );
 
         // Re-add foo on the same commit as the first one.
         detector.add_file_commit(
-            &path("foo"),
-            Some(&4),
-            &branches,
-            &author,
-            &message,
+            path("foo"),
+            Some(4),
+            branches,
+            author.clone(),
+            message,
             timestamp(120),
         );
 
-        let have: Vec<PatchSet<i32>> = detector.into_patchsets().into_iter().collect();
+        let have: Vec<PatchSet<i32>> = detector.into_patchset_iter().collect();
         let want: Vec<PatchSet<i32>> = vec![
             PatchSet {
                 time: timestamp(90),
@@ -396,7 +397,7 @@ mod tests {
             },
             PatchSet {
                 time: timestamp(300),
-                author: author.clone(),
+                author,
                 message: String::from("message in a bottle"),
                 files: HashMap::from_iter([(path("foo"), [None].to_vec())]),
             },

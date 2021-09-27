@@ -1,17 +1,22 @@
 use std::{
     ffi::{OsStr, OsString},
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Write},
     os::unix::prelude::OsStrExt,
     time::Duration,
 };
 
 use discovery::Discovery;
 
+use git_cvs_fast_import_store::Store;
 use structopt::StructOpt;
+use tempfile::NamedTempFile;
+
+use crate::state::State;
 
 mod discovery;
 mod observer;
 mod output;
+mod state;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -30,11 +35,6 @@ struct Opt {
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
 
-    // TODO: refactor into something more sturdy that can hold state, since
-    // we'll need more than just marks.
-    #[structopt(short, long, parse(from_os_str), help = "mark file")]
-    mark_file: Option<OsString>,
-
     #[structopt(
         short,
         long,
@@ -42,6 +42,9 @@ struct Opt {
         help = "prefix to strip from incoming paths when creating files in the output repository"
     )]
     prefix: Option<OsString>,
+
+    #[structopt(short, long, parse(from_os_str), help = "state file")]
+    state_file: OsString,
 }
 
 #[tokio::main]
@@ -68,10 +71,28 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     pretty_env_logger::init();
 
-    // Set up our git-fast-import export.
-    let (output, output_handle) = output::new(io::stdout(), opt.mark_file.as_ref());
+    // Set up our state.
+    let state = State::new();
+    let store = Store::new(opt.state_file.as_os_str())?;
 
-    let (observer, collector) = observer::new(opt.delta);
+    // If we have marks, dump them to a temporary file.
+    let mut conn = store.connection()?;
+    let mark_file = conn
+        .get_raw_marks()?
+        .map(|mut reader| -> Result<NamedTempFile, anyhow::Error> {
+            let mut file = NamedTempFile::new()?;
+
+            io::copy(&mut reader, &mut file)?;
+            file.flush()?;
+
+            Ok(file)
+        })
+        .transpose()?;
+
+    // Set up our git-fast-import export.
+    let (output, output_handle) = output::new(io::stdout(), mark_file.as_ref());
+
+    let observer = observer::Observer::new(opt.delta, state);
 
     // Set up our file discovery.
     let discovery = Discovery::new(
@@ -101,18 +122,18 @@ async fn main() -> anyhow::Result<()> {
     // workers to end.
     log::trace!("discovery phase done; getting patchsets");
     drop(discovery);
-    drop(observer);
 
+    let result = observer.into_observation_result().await?;
     let mut from = None;
-    for patch_set in collector.await??.patchset_iter().unwrap() {
+    for patch_set in result.patchset_iter() {
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
         builder
             .committer(git_fast_import::Identity::new(
                 None,
-                patch_set.author,
+                patch_set.author.clone(),
                 patch_set.time,
             )?)
-            .message(patch_set.message);
+            .message(patch_set.message.clone());
 
         if let Some(mark) = from {
             builder.from(mark);
@@ -122,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
             match mark {
                 Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
-                    mark,
+                    mark: *mark,
                     path: path.to_string_lossy().into(),
                 }),
                 None => builder.add_file_command(git_fast_import::FileCommand::Delete {
@@ -140,4 +161,6 @@ async fn main() -> anyhow::Result<()> {
 
     // And now we wait.
     output_handle.await?
+
+    // TODO: write the mark file contents back into the store.
 }

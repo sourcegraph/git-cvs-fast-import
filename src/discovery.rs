@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use comma_v::{Delta, DeltaText};
+use comma_v::{Delta, DeltaText, Num};
 use flume::Sender;
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
@@ -75,7 +75,7 @@ async fn handle_path(
     // Send tag information, if any.
     if !cv.admin.symbols.is_empty() {
         log::trace!("{}: found {} tag(s)", disp, cv.admin.symbols.len());
-        observer.file_tags(&real_path, &cv.admin.symbols)?;
+        observer.file_tags(&real_path, &cv.admin.symbols).await;
     }
 
     // Start at the head and work our way down.
@@ -87,7 +87,10 @@ async fn handle_path(
     log::trace!("{}: found HEAD revision {}", disp, head_num);
     let mut file = File::new(delta_text.text.as_cursor())?;
 
-    let mark = handle_file_version(output, observer, &file, delta, delta_text, &real_path).await?;
+    let mark = handle_file_version(
+        output, observer, &file, head_num, delta, delta_text, &real_path,
+    )
+    .await?;
     log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
 
     while let Some(next_num) = &delta.next {
@@ -101,8 +104,10 @@ async fn handle_path(
         let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
         file.apply_in_place(&commands)?;
 
-        let mark =
-            handle_file_version(output, observer, &file, delta, delta_text, &real_path).await?;
+        let mark = handle_file_version(
+            output, observer, &file, next_num, delta, delta_text, &real_path,
+        )
+        .await?;
         log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
     }
 
@@ -113,6 +118,7 @@ async fn handle_file_version(
     output: &Output,
     observer: &observer::Observer,
     file: &File,
+    revision: &Num,
     delta: &Delta,
     delta_text: &DeltaText,
     real_path: &OsStr,
@@ -122,7 +128,16 @@ async fn handle_file_version(
         _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
     };
 
-    observer.commit(real_path, mark, delta, delta_text)?;
+    observer
+        .commit(
+            real_path,
+            revision,
+            &delta.branches,
+            mark,
+            delta,
+            delta_text,
+        )
+        .await?;
     Ok(mark)
 }
 
