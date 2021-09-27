@@ -1,45 +1,78 @@
-use std::{collections::HashMap, ffi::OsStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    ffi::{OsStr, OsString},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use binary_heap_plus::{BinaryHeap, MinComparator};
 use comma_v::{Delta, DeltaText, Num, Sym};
 use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{
+        mpsc::{error::SendError, unbounded_channel, UnboundedSender},
+        Mutex,
+    },
+    task::{self, JoinHandle},
+};
 
-use crate::state::{FileRevision, State};
+use crate::state::{self, FileRevision, State};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Observer {
-    detector: Arc<Mutex<MaybeDetector>>,
+    commit_tx: UnboundedSender<Commit>,
     state: State,
 }
 
 #[derive(Debug)]
-struct MaybeDetector(Option<Detector<Mark>>);
+pub(crate) struct Collector {
+    join_handle: JoinHandle<Result<Detector<Mark>, Error>>,
+    state: State,
+}
 
-impl MaybeDetector {
-    fn new(delta: Duration) -> Self {
-        Self(Some(Detector::new(delta)))
-    }
-
-    fn detector(&mut self) -> Result<&mut Detector<Mark>, Error> {
-        match self.0.as_mut() {
-            Some(detector) => Ok(detector),
-            None => Err(Error::NoDetector),
-        }
-    }
+#[derive(Debug)]
+pub(crate) struct Commit {
+    path: OsString,
+    id: Option<Mark>,
+    branches: Vec<Vec<u8>>,
+    author: String,
+    message: String,
+    time: SystemTime,
 }
 
 impl Observer {
     /// Constructs a new commit observer, along with a collector that can be
-    /// awaited once the observer has been dropped to receive the final result
+    /// awaited once all observers have been dropped to receive the final result
     /// of the observations.
-    pub(crate) fn new(delta: Duration, state: State) -> Self {
-        Self {
-            detector: Arc::new(Mutex::new(MaybeDetector::new(delta))),
-            state,
-        }
+    pub(crate) fn new(delta: Duration, state: State) -> (Self, Collector) {
+        let (commit_tx, mut commit_rx) = unbounded_channel::<Commit>();
+
+        let join_handle = task::spawn(async move {
+            let mut detector = Detector::new(delta);
+
+            while let Some(commit) = commit_rx.recv().await {
+                detector.add_file_commit(
+                    commit.path,
+                    commit.id,
+                    commit.branches,
+                    commit.author,
+                    commit.message,
+                    commit.time,
+                );
+            }
+
+            Ok::<Detector<Mark>, Error>(detector)
+        });
+
+        (
+            Self {
+                commit_tx,
+                state: state.clone(),
+            },
+            Collector { join_handle, state },
+        )
     }
 
     pub(crate) async fn commit(
@@ -50,18 +83,18 @@ impl Observer {
         id: Option<Mark>,
         delta: &Delta,
         text: &DeltaText,
-    ) -> anyhow::Result<()> {
-        self.detector.lock().await.detector()?.add_file_commit(
-            path.to_os_string(),
+    ) -> Result<(), Error> {
+        self.commit_tx.send(Commit {
+            path: path.to_os_string(),
             id,
-            branches
+            branches: branches
                 .iter()
                 .map(|branch| branch.to_vec())
                 .collect::<Vec<Vec<u8>>>(),
-            String::from_utf8_lossy(&delta.author).into(),
-            String::from_utf8_lossy(&text.log).into(),
-            delta.date,
-        );
+            author: String::from_utf8_lossy(&delta.author).into(),
+            message: String::from_utf8_lossy(&text.log).into(),
+            time: delta.date,
+        })?;
 
         self.state
             .add_file_revision(
@@ -89,22 +122,19 @@ impl Observer {
                 .await;
         }
     }
+}
 
-    pub(crate) async fn into_observation_result(self) -> anyhow::Result<ObservationResult> {
-        let detector = match self.detector.lock().await.0.take() {
-            Some(detector) => detector,
-            None => return Err(anyhow::format_err!("no detectorino")),
-        };
-
+impl Collector {
+    pub(crate) async fn join(self) -> Result<ObservationResult, Error> {
         Ok(ObservationResult {
-            patchsets: detector.into_binary_heap(),
+            patchsets: self.join_handle.await??.into_patchset_iter().collect(),
             state: self.state,
         })
     }
 }
 
 pub(crate) struct ObservationResult {
-    patchsets: BinaryHeap<PatchSet<Mark>, MinComparator>,
+    patchsets: Vec<PatchSet<Mark>>,
     state: State,
 }
 
@@ -116,6 +146,12 @@ impl ObservationResult {
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
-    #[error("no detector is available in the observer; this likely indicates that into_observation_result() was invoked before all other instances of Detector were dropped")]
-    NoDetector,
+    #[error(transparent)]
+    Join(#[from] task::JoinError),
+
+    #[error(transparent)]
+    Send(#[from] SendError<Commit>),
+
+    #[error(transparent)]
+    State(#[from] state::Error),
 }

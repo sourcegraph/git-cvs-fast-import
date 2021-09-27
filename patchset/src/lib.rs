@@ -106,9 +106,13 @@ where
         }
     }
 
-    /// Consumes the detector and returns a heap containing the detected
-    /// patchsets in ascending time order.
-    pub fn into_binary_heap(self) -> BinaryHeap<PatchSet<ID>, MinComparator> {
+    /// Consumes the detector and returns the detected patchsets in ascending
+    /// time order.
+    pub fn into_patchset_iter(self) -> impl Iterator<Item = PatchSet<ID>> {
+        self.into_binary_heap().into_iter_sorted()
+    }
+
+    fn into_binary_heap(self) -> BinaryHeap<PatchSet<ID>, MinComparator> {
         let mut patchsets = BinaryHeap::new_min();
 
         for (key, commits) in self.file_commits.into_iter() {
@@ -152,12 +156,6 @@ where
         }
 
         patchsets
-    }
-
-    /// Consumes the detector and returns the detected patchsets in ascending
-    /// time order.
-    pub fn into_patchset_iter(self) -> impl Iterator<Item = PatchSet<ID>> {
-        self.into_binary_heap().into_iter_sorted()
     }
 }
 

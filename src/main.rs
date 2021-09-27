@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
     // Set up our git-fast-import export.
     let (output, output_handle) = output::new(io::stdout(), mark_file.as_ref());
 
-    let observer = observer::Observer::new(opt.delta, state);
+    let (observer, collector) = observer::Observer::new(opt.delta, state);
 
     // Set up our file discovery.
     let discovery = Discovery::new(
@@ -122,8 +122,9 @@ async fn main() -> anyhow::Result<()> {
     // workers to end.
     log::trace!("discovery phase done; getting patchsets");
     drop(discovery);
+    drop(observer);
 
-    let result = observer.into_observation_result().await?;
+    let result = collector.join().await?;
     let mut from = None;
     for patch_set in result.patchset_iter() {
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
