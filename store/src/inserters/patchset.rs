@@ -26,18 +26,18 @@ impl PatchSet {
 
         thread::spawn(move || {
             let mut patchset_stmt = conn
-                .prepare("INSERT INTO patchsets (mark, branch, time) VALUES (?, ?, ?)")
+                .prepare("REPLACE INTO patchsets (mark, branch, time) VALUES (?, ?, ?)")
                 .unwrap();
-            let mut revision_stmt=conn.prepare("INSERT INTO patchset_file_revisions (patchset, file_revision) VALUES (?, (SELECT id FROM file_revisions WHERE path = ? AND revision = ?))").unwrap();
+            let mut revision_stmt = conn.prepare("REPLACE INTO patchset_file_revisions (patchset, file_revision) VALUES (?, (SELECT id FROM file_revisions WHERE path = ? AND revision = ?))").unwrap();
 
             while let Ok(msg) = rx.recv() {
-                let id = patchset_stmt
-                    .insert(params![msg.mark, &msg.branch, sql::time(&msg.time)])
+                patchset_stmt
+                    .execute(params![msg.mark, &msg.branch, sql::time(&msg.time)])
                     .unwrap();
 
                 for (path, revision) in msg.revisions.into_iter() {
                     revision_stmt
-                        .execute(params![id, sql::os_str(path.as_os_str()), &revision])
+                        .execute(params![msg.mark, sql::os_str(path.as_os_str()), &revision])
                         .unwrap();
                 }
             }

@@ -84,15 +84,16 @@ impl Observer {
         delta: &Delta,
         text: &DeltaText,
     ) -> Result<(), Error> {
+        let branches: Vec<Vec<u8>> = branches.iter().map(|branch| branch.to_vec()).collect();
+        let author = String::from_utf8_lossy(&delta.author).into_owned();
+        let message = String::from_utf8_lossy(&text.log).into_owned();
+
         self.commit_tx.send(Commit {
             path: path.to_os_string(),
             id,
-            branches: branches
-                .iter()
-                .map(|branch| branch.to_vec())
-                .collect::<Vec<Vec<u8>>>(),
-            author: String::from_utf8_lossy(&delta.author).into(),
-            message: String::from_utf8_lossy(&text.log).into(),
+            branches: branches.clone(),
+            author: author.clone(),
+            message: message.clone(),
             time: delta.date,
         })?;
 
@@ -101,6 +102,12 @@ impl Observer {
                 FileRevision {
                     path: path.to_os_string(),
                     revision: revision.to_vec(),
+                },
+                state::Commit {
+                    branches,
+                    author,
+                    message,
+                    time: delta.date,
                 },
                 id,
             )

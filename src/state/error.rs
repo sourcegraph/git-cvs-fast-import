@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use git_fast_import::Mark;
 use thiserror::Error;
 
@@ -9,7 +11,7 @@ pub(crate) type Result<T> = std::result::Result<T, Error>;
 pub(crate) enum Error {
     #[error("duplicate file revision {mark} for {file_revision:?}")]
     DuplicateFileRevision {
-        file_revision: FileRevision,
+        file_revision: Arc<FileRevision>,
         mark: Mark,
     },
 
@@ -21,10 +23,13 @@ pub(crate) enum Error {
 
     #[error("tag {0} does not exist")]
     NoTag(String),
+
+    #[error(transparent)]
+    Store(#[from] git_cvs_fast_import_store::Error),
 }
 
-impl From<(FileRevision, Mark)> for Error {
-    fn from((file_revision, mark): (FileRevision, Mark)) -> Self {
+impl From<(Arc<FileRevision>, Mark)> for Error {
+    fn from((file_revision, mark): (Arc<FileRevision>, Mark)) -> Self {
         Self::DuplicateFileRevision {
             file_revision,
             mark,

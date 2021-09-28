@@ -6,7 +6,7 @@ CREATE TABLE file_revisions (
     mark INTEGER NULL
 );
 
-CREATE UNIQUE INDEX file_revisions_idx ON file_revisions (path, revision);
+CREATE UNIQUE INDEX file_revisions_unique_idx ON file_revisions (path, revision);
 
 CREATE INDEX file_revisions_mark_idx ON file_revisions (mark);
 
@@ -23,6 +23,8 @@ CREATE TABLE file_revision_branches (
         ON UPDATE RESTRICT
 );
 
+CREATE UNIQUE INDEX file_revision_branches_unique_idx ON file_revision_branches (file_revision, branch);
+
 
 CREATE TABLE tags (
     id INTEGER PRIMARY KEY,
@@ -30,6 +32,8 @@ CREATE TABLE tags (
     file BLOB NOT NULL,
     revision TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX tags_unique_idx ON tags (tag, file, revision);
 
 CREATE INDEX tags_file_revision_idx ON tags (file, revision);
 
@@ -48,7 +52,7 @@ CREATE TABLE patchset_file_revisions (
     patchset INTEGER NOT NULL,
     file_revision INTEGER NOT NULL,
     FOREIGN KEY (patchset)
-        REFERENCES patchsets (id)
+        REFERENCES patchsets (mark)
         ON DELETE RESTRICT
         ON UPDATE RESTRICT,
     FOREIGN KEY (file_revision)
@@ -56,6 +60,8 @@ CREATE TABLE patchset_file_revisions (
         ON DELETE RESTRICT
         ON UPDATE RESTRICT
 );
+
+CREATE UNIQUE INDEX patchset_file_revisions_unique_idx ON patchset_file_revisions (patchset, file_revision);
 
 
 CREATE TABLE marks (

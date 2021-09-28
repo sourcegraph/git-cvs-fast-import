@@ -32,11 +32,13 @@ impl FileRevision {
         // thread), and then handle inserts as messages going to that thread.
         thread::spawn(move || {
             let mut branch_stmt = conn
-                .prepare("INSERT INTO file_revision_branches (file_revision, branch) VALUES (?, ?)")
+                .prepare(
+                    "REPLACE INTO file_revision_branches (file_revision, branch) VALUES (?, ?)",
+                )
                 .unwrap();
             let mut revision_stmt = conn
                 .prepare(
-                    "INSERT INTO file_revisions (path, revision, time, mark) VALUES (?, ?, ?, ?)",
+                    "REPLACE INTO file_revisions (path, revision, time, mark) VALUES (?, ?, ?, ?)",
                 )
                 .unwrap();
 

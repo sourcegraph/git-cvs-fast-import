@@ -24,7 +24,7 @@ impl Tag {
 
         thread::spawn(move || {
             let mut stmt = conn
-                .prepare("INSERT INTO tags (tag, file, revision) VALUES (?, ?, ?)")
+                .prepare("REPLACE INTO tags (tag, file, revision) VALUES (?, ?, ?)")
                 .unwrap();
 
             while let Ok(msg) = rx.recv() {

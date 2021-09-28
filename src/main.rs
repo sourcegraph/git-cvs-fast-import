@@ -11,7 +11,7 @@ use git_cvs_fast_import_store::Store;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
 
-use crate::state::State;
+use crate::state::{FileRevision, State};
 
 mod discovery;
 mod observer;
@@ -92,9 +92,10 @@ async fn main() -> anyhow::Result<()> {
     // Set up our git-fast-import export.
     let (output, output_handle) = output::new(io::stdout(), mark_file.as_ref());
 
-    let (observer, collector) = observer::Observer::new(opt.delta, state);
+    let (observer, collector) = observer::Observer::new(opt.delta, state.clone());
 
     // Set up our file discovery.
+    log::debug!("starting file discovery");
     let discovery = Discovery::new(
         &output,
         &observer,
@@ -120,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
     // We're done with discovery, so we can drop the input halves of the objects
     // that won't be receiving any further data, which will trigger their
     // workers to end.
-    log::trace!("discovery phase done; getting patchsets");
+    log::debug!("discovery phase done; sending main patchsets as commits");
     drop(discovery);
     drop(observer);
 
@@ -153,8 +154,31 @@ async fn main() -> anyhow::Result<()> {
             };
         }
 
-        from = Some(output.commit(builder.build()?).await?);
+        let mark = output.commit(builder.build()?).await?;
+
+        let file_marks = patch_set
+            .file_revision_iter()
+            .map(|(_, marks)| marks)
+            .flatten()
+            .filter_map(|mark| mark.as_ref().cloned());
+
+        state
+            .add_patchset(
+                mark,
+                b"main".to_vec(),
+                patch_set.time,
+                patch_set
+                    .file_revision_iter()
+                    .map(|(path, revision)| FileRevision {
+                        path: path.clone(),
+                        revision: revision,
+                    }),
+            )
+            .await;
+
+        from = Some(mark);
     }
+    log::debug!("main patchsets sent; starting tag detection");
 
     // We need to ensure all references to output are done before the output
     // handle will finish up.
