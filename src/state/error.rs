@@ -3,7 +3,7 @@ use std::sync::Arc;
 use git_fast_import::Mark;
 use thiserror::Error;
 
-use super::FileRevision;
+use super::{FileID, FileRevision};
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
@@ -15,8 +15,11 @@ pub(crate) enum Error {
         mark: Mark,
     },
 
+    #[error("no file revision exists for ID {0}")]
+    NoFileRevisionForID(FileID),
+
     #[error("no file revision exists for mark {0}")]
-    NoFileRevision(Mark),
+    NoFileRevisionForMark(Mark),
 
     #[error("no mark exists for file revision {0:?}")]
     NoMark(FileRevision),

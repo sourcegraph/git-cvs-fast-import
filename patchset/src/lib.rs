@@ -81,7 +81,7 @@ where
     pub fn add_file_commit<BI>(
         &mut self,
         path: OsString,
-        id: Option<ID>,
+        id: ID,
         branches: BI,
         author: String,
         message: String,
@@ -172,18 +172,17 @@ where
     pub time: SystemTime,
     pub author: String,
     pub message: String,
-    files: HashMap<OsString, Vec<Option<ID>>>,
+    files: HashMap<OsString, Vec<ID>>,
 }
 
 impl<ID> PatchSet<ID>
 where
     ID: Debug + Clone + Eq,
 {
-    /// Returns the content ID for the given file. If the file is deleted in
-    /// this patchset, None is returned.
-    pub fn file_content(&self, file: &OsStr) -> Result<Option<&ID>, Error> {
+    /// Returns the content ID for the given file.
+    pub fn file_content(&self, file: &OsStr) -> Result<&ID, Error> {
         match self.files.get(file) {
-            Some(ids) => Ok(Self::content(ids)),
+            Some(ids) => Ok(Self::content(ids)?),
             None => Err(Error::file_not_found(file)),
         }
     }
@@ -191,28 +190,24 @@ where
     /// Iterates over each file in the patchset, in arbitrary order, along with
     /// the content ID for the file. If the file is deleted in the patchset, the
     /// ID will be None.
-    pub fn file_content_iter(&self) -> impl Iterator<Item = (&OsString, Option<&ID>)> {
+    pub fn file_content_iter(&self) -> impl Iterator<Item = (&OsString, &ID)> {
         self.files
             .iter()
-            .map(|(file, ids)| (file, Self::content(ids)))
+            .filter_map(|(file, ids)| ids.last().map(|id| (file, id)))
     }
 
     /// Iterates over each file in the patchset, in arbitrary order, and
     /// provides the file and a Vec of all the content IDs that were squashed
     /// into the patchset for that file.
-    pub fn file_revision_iter(&self) -> impl Iterator<Item = (&OsString, &Vec<Option<ID>>)> {
+    pub fn file_revision_iter(&self) -> impl Iterator<Item = (&OsString, &Vec<ID>)> {
         self.files.iter()
     }
 
-    /// Checks if the file is deleted in the patchset.
-    ///
-    /// In most cases, [`file_content()`] will be more useful.
-    pub fn is_deleted(&self, file: &OsStr) -> Result<bool, Error> {
-        Ok(self.file_content(file)?.is_none())
-    }
-
-    fn content(ids: &[Option<ID>]) -> Option<&ID> {
-        ids.last().map(|id| id.as_ref()).flatten()
+    fn content(ids: &[ID]) -> Result<&ID, Error> {
+        match ids.last() {
+            Some(id) => Ok(id),
+            None => Err(Error::MissingFileContent),
+        }
     }
 }
 
@@ -270,7 +265,7 @@ where
 {
     path: OsString,
     branches: Vec<Vec<u8>>,
-    id: Option<ID>,
+    id: ID,
     time: SystemTime,
 }
 
@@ -305,6 +300,9 @@ where
 pub enum Error {
     #[error("file does not exist: {0}")]
     FileNotFound(String),
+
+    #[error("unable to find content ID for file")]
+    MissingFileContent,
 }
 
 impl Error {
@@ -330,7 +328,7 @@ mod tests {
 
         detector.add_file_commit(
             path("foo"),
-            Some(1),
+            1,
             branches.clone(),
             author.clone(),
             message.clone(),
@@ -339,17 +337,17 @@ mod tests {
 
         detector.add_file_commit(
             path("bar"),
-            Some(2),
+            2,
             branches.clone(),
             author.clone(),
             message.clone(),
             timestamp(101),
         );
 
-        // Delete foo on a new commit.
+        // Mutate foo on a new commit.
         detector.add_file_commit(
             path("foo"),
-            None,
+            3,
             branches.clone(),
             author.clone(),
             message.clone(),
@@ -359,7 +357,7 @@ mod tests {
         // Add a file on a separate commit.
         detector.add_file_commit(
             path("bar"),
-            Some(3),
+            4,
             branches.clone(),
             author.clone(),
             String::from("this is a different message"),
@@ -369,7 +367,7 @@ mod tests {
         // Re-add foo on the same commit as the first one.
         detector.add_file_commit(
             path("foo"),
-            Some(4),
+            5,
             branches,
             author.clone(),
             message,
@@ -382,22 +380,22 @@ mod tests {
                 time: timestamp(90),
                 author: author.clone(),
                 message: String::from("this is a different message"),
-                files: HashMap::from_iter([(path("bar"), [Some(3)].to_vec())]),
+                files: HashMap::from_iter([(path("bar"), [4].to_vec())]),
             },
             PatchSet {
                 time: timestamp(120),
                 author: author.clone(),
                 message: String::from("message in a bottle"),
                 files: HashMap::from_iter([
-                    (path("foo"), [Some(1), Some(4)].to_vec()),
-                    (path("bar"), [Some(2)].to_vec()),
+                    (path("foo"), [1, 5].to_vec()),
+                    (path("bar"), [2].to_vec()),
                 ]),
             },
             PatchSet {
                 time: timestamp(300),
                 author,
                 message: String::from("message in a bottle"),
-                files: HashMap::from_iter([(path("foo"), [None].to_vec())]),
+                files: HashMap::from_iter([(path("foo"), [3].to_vec())]),
             },
         ];
         assert_eq!(have, want);

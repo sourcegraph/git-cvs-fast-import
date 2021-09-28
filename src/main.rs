@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     // 3. Send commits.
 
     let opt = Opt::from_args();
-    pretty_env_logger::init();
+    pretty_env_logger::init_timed();
 
     // Set up our state.
     let state = State::new();
@@ -141,11 +141,11 @@ async fn main() -> anyhow::Result<()> {
             builder.from(mark);
         }
 
-        for (path, mark) in patch_set.file_content_iter() {
-            match mark {
+        for (path, file_id) in patch_set.file_content_iter() {
+            match state.get_mark_from_file_id(*file_id).await? {
                 Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
-                    mark: *mark,
+                    mark,
                     path: path.to_string_lossy().into(),
                 }),
                 None => builder.add_file_command(git_fast_import::FileCommand::Delete {
@@ -156,12 +156,6 @@ async fn main() -> anyhow::Result<()> {
 
         let mark = output.commit(builder.build()?).await?;
 
-        let file_marks = patch_set
-            .file_revision_iter()
-            .map(|(_, marks)| marks)
-            .flatten()
-            .filter_map(|mark| mark.as_ref().cloned());
-
         state
             .add_patchset(
                 mark,
@@ -169,10 +163,9 @@ async fn main() -> anyhow::Result<()> {
                 patch_set.time,
                 patch_set
                     .file_revision_iter()
-                    .map(|(path, revision)| FileRevision {
-                        path: path.clone(),
-                        revision: revision,
-                    }),
+                    .map(|(_path, ids)| ids)
+                    .flatten()
+                    .copied(),
             )
             .await;
 
@@ -185,7 +178,12 @@ async fn main() -> anyhow::Result<()> {
     drop(output);
 
     // And now we wait.
-    output_handle.await?
+    output_handle.await??;
+
+    log::debug!("persisting state to store");
+    state.persist_to_store(&store).await?;
 
     // TODO: write the mark file contents back into the store.
+
+    Ok(())
 }

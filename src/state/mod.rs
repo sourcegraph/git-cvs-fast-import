@@ -1,11 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
+    collections::{BTreeMap, HashMap},
+    ffi::OsString,
     sync::Arc,
     time::SystemTime,
 };
 
-use bimap::BiMap;
 use git_cvs_fast_import_store::Store;
 use git_fast_import::Mark;
 use tokio::sync::RwLock;
@@ -13,13 +12,15 @@ use tokio::sync::RwLock;
 mod error;
 pub(crate) use self::error::{Error, Result};
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub type FileID = usize;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct FileRevision {
     pub(crate) path: OsString,
     pub(crate) revision: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Commit {
     pub(crate) branches: Vec<Vec<u8>>,
     pub(crate) author: String,
@@ -31,10 +32,10 @@ pub(crate) struct Commit {
 struct PatchSet {
     branch: Vec<u8>,
     time: SystemTime,
-    revisions: Vec<Arc<FileRevision>>,
+    file_revisions: Vec<FileID>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MarkedCommit {
     mark: Option<Mark>,
     commit: Commit,
@@ -46,40 +47,36 @@ pub(crate) struct MarkedPatchSet {
     patchset: Arc<PatchSet>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct State {
-    // Commits include all file revisions, including deletions.
-    commits: Arc<RwLock<HashMap<Arc<FileRevision>, MarkedCommit>>>,
+    // Base storage of every revision seen. Not exposed to the outside.
+    file_revisions: Arc<RwLock<BTreeMap<Arc<FileRevision>, FileID>>>,
 
-    // File revisions include all non-deletion file revisions and their
-    // associated marks.
-    file_revisions: Arc<RwLock<BiMap<Arc<FileRevision>, Mark>>>,
+    // Mapping of revisions to commits and marks.
+    file_revision_commits: Arc<RwLock<Vec<(Arc<FileRevision>, MarkedCommit)>>>,
 
-    // Patchsets include all patchsets, keyed by their commit mark.
-    patchsets: Arc<RwLock<HashMap<Mark, Arc<PatchSet>>>>,
+    // Mapping of file marks to revisions and commits.
+    file_marks: Arc<RwLock<HashMap<Mark, FileID>>>,
 
-    // Revision patchsets are all patchsets keyed by file revision.
-    // revision_patchsets: Arc<RwLock<HashMap<Arc<FileRevision>, MarkedPatchSet>>>,
+    // Mapping of tags to revisions and commits.
+    tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileID>>>>,
 
-    // Tags include all tags, keyed by name.
-    tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileRevision>>>>,
+    // Mapping of patchset marks to patchsets.
+    patchset_marks: Arc<RwLock<HashMap<Mark, Arc<PatchSet>>>>,
 }
 
 // TOOD: methods to interact with a database store.
 impl State {
     pub(crate) fn new() -> Self {
-        Self {
-            commits: Arc::new(RwLock::new(HashMap::new())),
-            file_revisions: Arc::new(RwLock::new(BiMap::new())),
-            patchsets: Arc::new(RwLock::new(HashMap::new())),
-            // revision_patchsets: Arc::new(RwLock::new(HashMap::new())),
-            tags: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self::default()
     }
 
     pub(crate) async fn persist_to_store(&self, store: &Store) -> Result<()> {
+        let file_revision_commits_vec = self.file_revision_commits.read().await;
+
+        log::trace!("inserting file revisions");
         let mut inserter = store.file_revision_inserter()?;
-        for (file_revision, marked_commit) in self.commits.read().await.iter() {
+        for (file_revision, marked_commit) in file_revision_commits_vec.iter() {
             inserter.insert(
                 &file_revision.path,
                 &file_revision.revision,
@@ -88,28 +85,47 @@ impl State {
                 &marked_commit.commit.branches,
             )?;
         }
+        inserter.finalise();
+        log::trace!("done inserting file revisions");
 
+        log::trace!("inserting tags");
         let mut inserter = store.tag_inserter()?;
-        for (tag, file_revisions) in self.tags.read().await.iter() {
-            for file_revision in file_revisions {
-                inserter.insert(tag, &file_revision.path, &file_revision.revision)?;
+        for (tag, ids) in self.tags.read().await.iter() {
+            for id in ids {
+                match file_revision_commits_vec.get(*id) {
+                    Some((file_revision, _marked_commit)) => {
+                        inserter.insert(tag, &file_revision.path, &file_revision.revision)?
+                    }
+                    None => {
+                        return Err(Error::NoFileRevisionForID(*id));
+                    }
+                }
             }
         }
+        inserter.finalise();
+        log::trace!("done inserting tags");
 
+        log::trace!("inserting patchsets");
         let mut inserter = store.patchset_inserter()?;
-        for (mark, patchset) in self.patchsets.read().await.iter() {
+        for (mark, patchset) in self.patchset_marks.read().await.iter() {
             inserter.insert(
                 mark.as_usize(),
                 &patchset.branch,
                 &patchset.time,
-                patchset.revisions.iter().map(|file_revision| {
-                    (
-                        file_revision.path.as_os_str(),
-                        file_revision.revision.as_slice(),
-                    )
+                patchset.file_revisions.iter().filter_map(|id| {
+                    file_revision_commits_vec
+                        .get(*id)
+                        .map(|(file_revision, _marked_commit)| {
+                            (
+                                file_revision.path.as_os_str(),
+                                file_revision.revision.as_slice(),
+                            )
+                        })
                 }),
-            );
+            )?;
         }
+        inserter.finalise();
+        log::trace!("done inserting patchsets");
 
         Ok(())
     }
@@ -119,22 +135,23 @@ impl State {
         file_revision: FileRevision,
         commit: Commit,
         mark: Option<Mark>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let file_revision = Arc::new(file_revision);
 
-        self.commits
-            .write()
-            .await
-            .insert(file_revision.clone(), MarkedCommit { mark, commit });
+        let id = {
+            let mut file_revision_commit_vec = self.file_revision_commits.write().await;
+
+            file_revision_commit_vec.push((file_revision.clone(), MarkedCommit { mark, commit }));
+            file_revision_commit_vec.len() - 1
+        };
+
+        self.file_revisions.write().await.insert(file_revision, id);
 
         if let Some(mark) = mark {
-            self.file_revisions
-                .write()
-                .await
-                .insert_no_overwrite(file_revision, mark)?;
+            self.file_marks.write().await.insert(mark, id);
         }
 
-        Ok(())
+        Ok(id)
     }
 
     pub(crate) async fn add_patchset<I>(
@@ -142,54 +159,56 @@ impl State {
         mark: Mark,
         branch: Vec<u8>,
         time: SystemTime,
-        file_revision_iter: I,
+        file_id_iter: I,
     ) where
-        I: Iterator<Item = FileRevision>,
+        I: Iterator<Item = FileID>,
     {
-        self.patchsets.write().await.insert(
+        self.patchset_marks.write().await.insert(
             mark,
             Arc::new(PatchSet {
                 branch,
                 time,
-                // FIXME: this is inefficient, since it almost certainly
-                // duplicates revisions we have elsewhere, but it's cheaper than
-                // looking them up with the current data structure.
-                revisions: file_revision_iter.map(|rev| Arc::new(rev)).collect(),
+                file_revisions: file_id_iter.collect(),
             }),
         );
-
-        // let file_revisions_map = self.file_revisions.read().await;
-        // let mut revision_patchsets = self.revision_patchsets.write().await;
-        // for revision in
-        //     file_revision_iter.filter_map(|file_mark| file_revisions_map.get_by_right(&file_mark))
-        // {
-        //     // let
-        //     revision_patchsets.insert(
-        //         revision.clone(),
-        //         MarkedPatchSet {
-        //             mark,
-        //             patchset: patchset.clone(),
-        //         },
-        //     );
-        // }
     }
 
     pub(crate) async fn add_tag(&self, tag: Vec<u8>, file_revision: FileRevision) {
-        self.tags
-            .write()
-            .await
-            .entry(tag)
-            .or_default()
-            .push(file_revision);
+        if let Some(id) = self.file_revisions.read().await.get(&file_revision) {
+            self.tags.write().await.entry(tag).or_default().push(*id);
+        }
+    }
+
+    pub(crate) async fn get_file_revision_from_id(&self, id: FileID) -> Result<Arc<FileRevision>> {
+        match self.file_revision_commits.read().await.get(id) {
+            Some((file_revision, marked_commit)) => Ok(file_revision.clone()),
+            None => Err(Error::NoFileRevisionForID(id)),
+        }
     }
 
     pub(crate) async fn get_file_revision_from_mark(
         &self,
         mark: &Mark,
     ) -> Result<Arc<FileRevision>> {
-        match self.file_revisions.read().await.get_by_right(mark) {
-            Some(file_revision) => Ok(file_revision.clone()),
-            None => Err(Error::NoFileRevision(*mark)),
+        let file_revision_commits_vec = self.file_revision_commits.read().await;
+
+        match self
+            .file_marks
+            .read()
+            .await
+            .get(mark)
+            .map(|id| file_revision_commits_vec.get(*id))
+            .flatten()
+        {
+            Some((revision, _marked_commit)) => Ok(revision.clone()),
+            None => Err(Error::NoFileRevisionForMark(*mark)),
+        }
+    }
+
+    pub(crate) async fn get_mark_from_file_id(&self, id: FileID) -> Result<Option<Mark>> {
+        match self.file_revision_commits.read().await.get(id) {
+            Some((_file_revision, marked_commit)) => Ok(marked_commit.mark),
+            None => Err(Error::NoFileRevisionForID(id)),
         }
     }
 
@@ -197,22 +216,27 @@ impl State {
         &self,
         file_revision: &FileRevision,
     ) -> Result<Option<Mark>> {
-        if let Some(maybe_mark) = self
-            .commits
-            .read()
-            .await
-            .get(file_revision)
-            .map(|marked_commit| marked_commit.mark)
-        {
-            Ok(maybe_mark)
+        if let Some(id) = self.file_revisions.read().await.get(file_revision) {
+            let (_revision, marked_commit) = &self.file_revision_commits.read().await[*id];
+
+            Ok(marked_commit.mark)
         } else {
             Err(Error::NoMark(file_revision.clone()))
         }
     }
 
-    pub(crate) async fn get_tag(&self, tag: &[u8]) -> Result<Vec<FileRevision>> {
-        if let Some(revisions) = self.tags.read().await.get(tag) {
-            Ok(revisions.to_vec())
+    pub(crate) async fn get_tag(
+        &self,
+        tag: &[u8],
+    ) -> Result<Vec<(Arc<FileRevision>, MarkedCommit)>> {
+        if let Some(ids) = self.tags.read().await.get(tag) {
+            let file_revision_commits_vec = self.file_revision_commits.read().await;
+
+            Ok(ids
+                .iter()
+                .map(|id| &file_revision_commits_vec[*id])
+                .cloned()
+                .collect())
         } else {
             Err(Error::NoTag(String::from_utf8_lossy(tag).into()))
         }

@@ -35,6 +35,10 @@ impl Discovery {
             task::spawn(async move {
                 loop {
                     let path = local_rx.recv_async().await?;
+                    if std::fs::metadata(&path)?.is_dir() {
+                        continue;
+                    }
+
                     log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
                     if let Err(e) =
                         handle_path(&local_output, &local_commit, &path, local_prefix.as_ref())

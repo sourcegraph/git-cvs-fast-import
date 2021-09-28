@@ -28,14 +28,15 @@ pub(crate) struct Observer {
 
 #[derive(Debug)]
 pub(crate) struct Collector {
-    join_handle: JoinHandle<Result<Detector<Mark>, Error>>,
+    join_handle: JoinHandle<Result<Detector<usize>, Error>>,
     state: State,
 }
 
 #[derive(Debug)]
 pub(crate) struct Commit {
     path: OsString,
-    id: Option<Mark>,
+    revision: Vec<u8>,
+    mark: Option<Mark>,
     branches: Vec<Vec<u8>>,
     author: String,
     message: String,
@@ -49,13 +50,30 @@ impl Observer {
     pub(crate) fn new(delta: Duration, state: State) -> (Self, Collector) {
         let (commit_tx, mut commit_rx) = unbounded_channel::<Commit>();
 
+        let task_state = state.clone();
         let join_handle = task::spawn(async move {
             let mut detector = Detector::new(delta);
 
             while let Some(commit) = commit_rx.recv().await {
+                let id = task_state
+                    .add_file_revision(
+                        FileRevision {
+                            path: commit.path.clone(),
+                            revision: commit.revision,
+                        },
+                        state::Commit {
+                            branches: commit.branches.clone(),
+                            author: commit.author.clone(),
+                            message: commit.message.clone(),
+                            time: commit.time,
+                        },
+                        commit.mark,
+                    )
+                    .await?;
+
                 detector.add_file_commit(
                     commit.path,
-                    commit.id,
+                    id,
                     commit.branches,
                     commit.author,
                     commit.message,
@@ -63,7 +81,7 @@ impl Observer {
                 );
             }
 
-            Ok::<Detector<Mark>, Error>(detector)
+            Ok::<Detector<usize>, Error>(detector)
         });
 
         (
@@ -84,36 +102,15 @@ impl Observer {
         delta: &Delta,
         text: &DeltaText,
     ) -> Result<(), Error> {
-        let branches: Vec<Vec<u8>> = branches.iter().map(|branch| branch.to_vec()).collect();
-        let author = String::from_utf8_lossy(&delta.author).into_owned();
-        let message = String::from_utf8_lossy(&text.log).into_owned();
-
-        self.commit_tx.send(Commit {
+        Ok(self.commit_tx.send(Commit {
             path: path.to_os_string(),
-            id,
-            branches: branches.clone(),
-            author: author.clone(),
-            message: message.clone(),
+            revision: revision.to_vec(),
+            mark: id,
+            branches: branches.iter().map(|branch| branch.to_vec()).collect(),
+            author: String::from_utf8_lossy(&delta.author).into_owned(),
+            message: String::from_utf8_lossy(&text.log).into_owned(),
             time: delta.date,
-        })?;
-
-        self.state
-            .add_file_revision(
-                FileRevision {
-                    path: path.to_os_string(),
-                    revision: revision.to_vec(),
-                },
-                state::Commit {
-                    branches,
-                    author,
-                    message,
-                    time: delta.date,
-                },
-                id,
-            )
-            .await?;
-
-        Ok(())
+        })?)
     }
 
     pub(crate) async fn file_tags(&self, path: &OsStr, symbols: &HashMap<Sym, Num>) {
@@ -141,12 +138,12 @@ impl Collector {
 }
 
 pub(crate) struct ObservationResult {
-    patchsets: Vec<PatchSet<Mark>>,
+    patchsets: Vec<PatchSet<usize>>,
     state: State,
 }
 
 impl ObservationResult {
-    pub(crate) fn patchset_iter(&self) -> impl Iterator<Item = &PatchSet<Mark>> {
+    pub(crate) fn patchset_iter(&self) -> impl Iterator<Item = &PatchSet<usize>> {
         self.patchsets.iter()
     }
 }

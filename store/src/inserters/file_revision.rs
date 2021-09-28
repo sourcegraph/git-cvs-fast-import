@@ -1,6 +1,7 @@
 use std::ffi::OsString;
+use std::panic;
 use std::sync::mpsc::{self, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::{ffi::OsStr, time::SystemTime};
 
 use rusqlite::{params, Connection};
@@ -9,6 +10,7 @@ use crate::error::Error;
 use crate::sql;
 
 pub struct FileRevision {
+    join: JoinHandle<()>,
     tx: Sender<Message>,
 }
 
@@ -30,7 +32,7 @@ impl FileRevision {
         // async API as a result. To make it easier for async code to use this,
         // we'll hide all of this on a worker thread (a real thread, not a green
         // thread), and then handle inserts as messages going to that thread.
-        thread::spawn(move || {
+        let join = thread::spawn(move || {
             let mut branch_stmt = conn
                 .prepare(
                     "REPLACE INTO file_revision_branches (file_revision, branch) VALUES (?, ?)",
@@ -58,7 +60,7 @@ impl FileRevision {
             }
         });
 
-        Self { tx }
+        Self { join, tx }
     }
 
     pub fn insert(
@@ -76,5 +78,13 @@ impl FileRevision {
             mark,
             branches: branches.to_vec(),
         })?)
+    }
+
+    pub fn finalise(self) {
+        drop(self.tx);
+
+        if let Err(e) = self.join.join() {
+            panic::resume_unwind(e);
+        }
     }
 }

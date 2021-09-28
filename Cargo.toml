@@ -11,7 +11,6 @@ tokio-test = "0.4.2"
 
 [dependencies]
 anyhow = "1.0.43"
-bimap = "0.6.1"
 binary-heap-plus = "0.4.1"
 comma-v = { path = "comma-v" }
 flume = "0.10.8"
@@ -27,3 +26,5 @@ structopt = "0.3.22"
 tempfile = "3.2.0"
 thiserror = "1.0.26"
 tokio = { version = "1.10.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "fs"] }
+
+[features]

@@ -1,7 +1,8 @@
 use std::{
     ffi::{OsStr, OsString},
+    panic,
     sync::mpsc::{self, Sender},
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use rusqlite::{params, Connection};
@@ -9,6 +10,7 @@ use rusqlite::{params, Connection};
 use crate::{error::Error, sql};
 
 pub struct Tag {
+    join: JoinHandle<()>,
     tx: Sender<Message>,
 }
 
@@ -22,7 +24,7 @@ impl Tag {
     pub(crate) fn new(conn: Connection) -> Self {
         let (tx, rx) = mpsc::channel::<Message>();
 
-        thread::spawn(move || {
+        let join = thread::spawn(move || {
             let mut stmt = conn
                 .prepare("REPLACE INTO tags (tag, file, revision) VALUES (?, ?, ?)")
                 .unwrap();
@@ -37,7 +39,7 @@ impl Tag {
             }
         });
 
-        Self { tx }
+        Self { join, tx }
     }
 
     pub fn insert(&mut self, tag: &[u8], path: &OsStr, revision: &[u8]) -> Result<(), Error> {
@@ -46,5 +48,13 @@ impl Tag {
             path: path.to_os_string(),
             revision: revision.to_vec(),
         })?)
+    }
+
+    pub fn finalise(self) {
+        drop(self.tx);
+
+        if let Err(e) = self.join.join() {
+            panic::resume_unwind(e);
+        }
     }
 }

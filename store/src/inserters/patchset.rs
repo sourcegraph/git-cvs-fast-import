@@ -1,7 +1,8 @@
 use std::{
     ffi::{OsStr, OsString},
+    panic,
     sync::mpsc::{self, Sender},
-    thread,
+    thread::{self, JoinHandle},
     time::SystemTime,
 };
 
@@ -10,6 +11,7 @@ use rusqlite::{params, Connection};
 use crate::{error::Error, sql};
 
 pub struct PatchSet {
+    join: JoinHandle<()>,
     tx: Sender<Message>,
 }
 
@@ -24,7 +26,7 @@ impl PatchSet {
     pub(crate) fn new(conn: Connection) -> Self {
         let (tx, rx) = mpsc::channel::<Message>();
 
-        thread::spawn(move || {
+        let join = thread::spawn(move || {
             let mut patchset_stmt = conn
                 .prepare("REPLACE INTO patchsets (mark, branch, time) VALUES (?, ?, ?)")
                 .unwrap();
@@ -43,7 +45,7 @@ impl PatchSet {
             }
         });
 
-        Self { tx }
+        Self { join, tx }
     }
 
     pub fn insert<'a, I>(
@@ -64,5 +66,13 @@ impl PatchSet {
                 .map(|(path, revision)| (path.to_os_string(), revision.to_vec()))
                 .collect(),
         })?)
+    }
+
+    pub fn finalise(self) {
+        drop(self.tx);
+
+        if let Err(e) = self.join.join() {
+            panic::resume_unwind(e);
+        }
     }
 }
