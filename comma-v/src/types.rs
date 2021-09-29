@@ -69,13 +69,13 @@ pub struct Delta {
 
 pub type Desc = VString;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DeltaText {
     pub log: VString,
     pub text: VString,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Num(pub Vec<u8>);
 
 impl Display for Num {
@@ -84,13 +84,13 @@ impl Display for Num {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Id(pub Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct Sym(pub Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct VString(pub Vec<u8>);
 
 impl VString {
@@ -99,5 +99,5 @@ impl VString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
 pub struct IntString(pub Vec<u8>);

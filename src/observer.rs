@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     ffi::{OsStr, OsString},
     time::{Duration, SystemTime},
 };
@@ -9,16 +8,25 @@ use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
 use thiserror::Error;
 use tokio::{
-    sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender},
+    sync::{
+        mpsc::{error::SendError, unbounded_channel, UnboundedSender},
+        oneshot,
+    },
     task::{self, JoinHandle},
 };
 
-use crate::state::{self, FileRevision, State};
+use crate::state::{self, FileID, FileRevision, State};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Observer {
-    commit_tx: UnboundedSender<Commit>,
+    commit_tx: UnboundedSender<CommitMessage>,
     state: State,
+}
+
+#[derive(Debug)]
+pub(crate) struct CommitMessage {
+    commit: Commit,
+    id_tx: oneshot::Sender<FileID>,
 }
 
 #[derive(Debug)]
@@ -43,37 +51,41 @@ impl Observer {
     /// awaited once all observers have been dropped to receive the final result
     /// of the observations.
     pub(crate) fn new(delta: Duration, state: State) -> (Self, Collector) {
-        let (commit_tx, mut commit_rx) = unbounded_channel::<Commit>();
+        let (commit_tx, mut commit_rx) = unbounded_channel::<CommitMessage>();
 
         let task_state = state.clone();
         let join_handle = task::spawn(async move {
             let mut detector = Detector::new(delta);
 
-            while let Some(commit) = commit_rx.recv().await {
+            while let Some(msg) = commit_rx.recv().await {
                 let id = task_state
                     .add_file_revision(
                         FileRevision {
-                            path: commit.path.clone(),
-                            revision: commit.revision,
+                            path: msg.commit.path.clone(),
+                            revision: msg.commit.revision,
                         },
                         state::Commit {
-                            branches: commit.branches.clone(),
-                            author: commit.author.clone(),
-                            message: commit.message.clone(),
-                            time: commit.time,
+                            branches: msg.commit.branches.clone(),
+                            author: msg.commit.author.clone(),
+                            message: msg.commit.message.clone(),
+                            time: msg.commit.time,
                         },
-                        commit.mark,
+                        msg.commit.mark,
                     )
                     .await?;
 
                 detector.add_file_commit(
-                    commit.path,
+                    msg.commit.path,
                     id,
-                    commit.branches,
-                    commit.author,
-                    commit.message,
-                    commit.time,
+                    msg.commit.branches,
+                    msg.commit.author,
+                    msg.commit.message,
+                    msg.commit.time,
                 );
+
+                msg.id_tx
+                    .send(id)
+                    .expect("cannot return file ID back to caller")
             }
 
             Ok::<Detector<usize>, Error>(detector)
@@ -96,30 +108,27 @@ impl Observer {
         id: Option<Mark>,
         delta: &Delta,
         text: &DeltaText,
-    ) -> Result<(), Error> {
-        Ok(self.commit_tx.send(Commit {
-            path: path.to_os_string(),
-            revision: revision.to_vec(),
-            mark: id,
-            branches: branches.iter().map(|branch| branch.to_vec()).collect(),
-            author: String::from_utf8_lossy(&delta.author).into_owned(),
-            message: String::from_utf8_lossy(&text.log).into_owned(),
-            time: delta.date,
-        })?)
+    ) -> Result<FileID, Error> {
+        let (tx, rx) = oneshot::channel();
+
+        self.commit_tx.send(CommitMessage {
+            commit: Commit {
+                path: path.to_os_string(),
+                revision: revision.to_vec(),
+                mark: id,
+                branches: branches.iter().map(|branch| branch.to_vec()).collect(),
+                author: String::from_utf8_lossy(&delta.author).into_owned(),
+                message: String::from_utf8_lossy(&text.log).into_owned(),
+                time: delta.date,
+            },
+            id_tx: tx,
+        })?;
+
+        Ok(rx.await?)
     }
 
-    pub(crate) async fn file_tags(&self, path: &OsStr, symbols: &HashMap<Sym, Num>) {
-        for (tag, revision) in symbols {
-            self.state
-                .add_tag(
-                    tag.to_vec(),
-                    FileRevision {
-                        path: path.to_os_string(),
-                        revision: revision.to_vec(),
-                    },
-                )
-                .await;
-        }
+    pub(crate) async fn tag(&self, tag: &Sym, file_id: FileID) {
+        self.state.add_tag(tag.to_vec(), file_id).await;
     }
 }
 
@@ -149,7 +158,10 @@ pub(crate) enum Error {
     Join(#[from] task::JoinError),
 
     #[error(transparent)]
-    Send(#[from] SendError<Commit>),
+    OneshotRecv(#[from] oneshot::error::RecvError),
+
+    #[error(transparent)]
+    Send(#[from] SendError<CommitMessage>),
 
     #[error(transparent)]
     State(#[from] state::Error),

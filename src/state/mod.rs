@@ -58,10 +58,6 @@ pub(crate) struct State {
     // Mapping of file marks to revisions and commits.
     file_marks: Arc<RwLock<HashMap<Mark, FileID>>>,
 
-    // Mapping of file revisions to pending tags, since we get tags before file
-    // revisions.
-    pending_tags: Arc<RwLock<HashMap<FileRevision, Vec<Vec<u8>>>>>,
-
     // Mapping of tags to revisions and commits.
     tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileID>>>>,
 
@@ -69,7 +65,7 @@ pub(crate) struct State {
     patchset_marks: Arc<RwLock<HashMap<Mark, Arc<PatchSet>>>>,
 }
 
-// TOOD: methods to interact with a database store.
+// TODO: methods to interact with a database store.
 impl State {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -158,9 +154,6 @@ impl State {
             self.file_marks.write().await.insert(mark, id);
         }
 
-        // Check if we have pending tags and turn them into real ones.
-        self.apply_pending_tags(file_revision, id).await;
-
         Ok(id)
     }
 
@@ -183,17 +176,8 @@ impl State {
         );
     }
 
-    pub(crate) async fn add_tag(&self, tag: Vec<u8>, file_revision: FileRevision) {
-        if let Some(id) = self.file_revisions.read().await.get(&file_revision) {
-            self.tags.write().await.entry(tag).or_default().push(*id);
-        } else {
-            self.pending_tags
-                .write()
-                .await
-                .entry(file_revision)
-                .or_default()
-                .push(tag);
-        }
+    pub(crate) async fn add_tag(&self, tag: Vec<u8>, id: FileID) {
+        self.tags.write().await.entry(tag).or_default().push(id);
     }
 
     pub(crate) async fn get_file_revision_from_id(&self, id: FileID) -> Result<Arc<FileRevision>> {
@@ -267,15 +251,5 @@ impl State {
             .cloned()
             .collect::<Vec<Vec<u8>>>()
             .into_iter()
-    }
-
-    async fn apply_pending_tags(&self, file_revision: Arc<FileRevision>, id: FileID) {
-        if let Some(pending_tags) = self.pending_tags.write().await.remove(&file_revision) {
-            let mut tags_map = self.tags.write().await;
-
-            for tag in pending_tags {
-                tags_map.entry(tag).or_default().push(id);
-            }
-        }
     }
 }

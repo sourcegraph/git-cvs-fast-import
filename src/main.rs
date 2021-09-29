@@ -2,12 +2,15 @@ use std::{
     ffi::{OsStr, OsString},
     io::{self, BufRead, BufReader, Write},
     os::unix::prelude::OsStrExt,
+    path::Path,
     time::Duration,
 };
 
 use discovery::Discovery;
 
 use git_cvs_fast_import_store::Store;
+use observer::{Collector, Observer};
+use output::Output;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
 
@@ -49,82 +52,37 @@ struct Opt {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Approximate strategy:
-    //
-    // 1. Walk ,v files in whatever path we're given. Parallelise the following
-    //    steps on a per file basis.
-    // 2. Immediately send a blob object for each revision of each one, tracking
-    //    which file/num corresponds to which mark. (Eventually we'll need to
-    //    check this against a list of things we've already put in the repo.)
-    // 3. Simultaneously send delta+log to a coroutine for later patchset
-    //    detection.
-    // 4. Once file reads are complete, attempt to detect patchsets.
-    // 5. Filter patchsets to the trunk to start with and construct the Git
-    //    tree.
-    //
-    // Eventually, we also need to handle branches:
-    //
-    // 1. Construct plausible branch names by examining symbols across the repo.
-    // 2. Attempt to construct coherent histories by assuming project branching.
-    // 3. Send commits.
-
+    // Parse command line arguments.
     let opt = Opt::from_args();
+
+    // Set up logging.
     pretty_env_logger::init_timed();
 
-    // Set up our state.
+    // Set up our state, and ensure we have a connection to our persistent
+    // store.
     let state = State::new();
     let store = Store::new(opt.state_file.as_os_str())?;
 
     // If we have marks, dump them to a temporary file.
-    let mut conn = store.connection()?;
-    let mark_file = conn
-        .get_raw_marks()?
-        .map(|mut reader| -> Result<NamedTempFile, anyhow::Error> {
-            let mut file = NamedTempFile::new()?;
-
-            io::copy(&mut reader, &mut file)?;
-            file.flush()?;
-
-            Ok(file)
-        })
-        .transpose()?;
+    let mark_file = dump_marks_to_file(&store)?;
 
     // Set up our git-fast-import export.
     let (output, output_handle) = output::new(io::stdout(), mark_file.as_ref());
 
-    let (observer, collector) = observer::Observer::new(opt.delta, state.clone());
-
-    // Set up our file discovery.
+    // Discover all files from stdin, and process each one into a new Collector
+    // and the state.
     log::debug!("starting file discovery");
-    let discovery = Discovery::new(
+    let collector = discover_files(
+        state.clone(),
         &output,
-        &observer,
+        opt.delta,
+        BufReader::new(io::stdin()).split(b'\n'),
         opt.jobs.unwrap_or_else(num_cpus::get),
-        match &opt.prefix {
-            Some(pfx) => Some(pfx.as_os_str()),
-            None => None,
-        },
-    );
-
-    for r in BufReader::new(io::stdin()).split(b'\n').into_iter() {
-        match r {
-            Ok(path) => {
-                log::trace!("sending {} to Discovery", String::from_utf8_lossy(&path));
-                discovery.discover(OsStr::from_bytes(&path))?;
-            }
-            Err(e) => {
-                anyhow::bail!("error reading path from stdin: {:?}", e);
-            }
-        }
-    }
-
-    // We're done with discovery, so we can drop the input halves of the objects
-    // that won't be receiving any further data, which will trigger their
-    // workers to end.
+        opt.prefix.as_deref(),
+    )?;
     log::debug!("discovery phase done; sending main patchsets as commits");
-    drop(discovery);
-    drop(observer);
 
+    // Collect our observations into patchsets so we can send them.
     let result = collector.join().await?;
     let mut from = None;
     for patch_set in result.patchset_iter() {
@@ -186,4 +144,57 @@ async fn main() -> anyhow::Result<()> {
     // TODO: write the mark file contents back into the store.
 
     Ok(())
+}
+
+/// Discover all files in the given path input and parse them into a Collector.
+///
+/// If an item when iterating `paths` returns an error, then that error will be
+/// returned from this function.
+fn discover_files<Error, PathIterator>(
+    state: State,
+    output: &Output,
+    delta: Duration,
+    paths: PathIterator,
+    parallel_jobs: usize,
+    prefix: Option<&OsStr>,
+) -> Result<Collector, anyhow::Error>
+where
+    Error: std::error::Error,
+    PathIterator: Iterator<Item = Result<Vec<u8>, Error>>,
+{
+    // Set up the observer and collector that we'll use during file discovery to
+    // persist file revisions and detect patchsets.
+    let (observer, collector) = Observer::new(delta, state);
+
+    let discovery = Discovery::new(output, &observer, parallel_jobs, prefix);
+
+    for r in paths {
+        match r {
+            Ok(path) => {
+                log::trace!("sending {} to Discovery", String::from_utf8_lossy(&path));
+                discovery.discover(OsStr::from_bytes(&path))?;
+            }
+            Err(e) => {
+                anyhow::bail!("error reading path from stdin: {:?}", e);
+            }
+        }
+    }
+
+    Ok(collector)
+}
+
+/// If marks exist in the store, dump them to a named temporary file that
+/// git-fast-import can read from.
+fn dump_marks_to_file(store: &Store) -> anyhow::Result<Option<NamedTempFile>> {
+    match store.connection()?.get_raw_marks()? {
+        Some(mut mark_reader) => {
+            let mut file = NamedTempFile::new()?;
+
+            io::copy(&mut mark_reader, &mut file)?;
+            file.flush()?;
+
+            Ok(Some(file))
+        }
+        None => Ok(None),
+    }
 }
