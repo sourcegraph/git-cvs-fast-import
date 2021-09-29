@@ -80,10 +80,12 @@ async fn main() -> anyhow::Result<()> {
         opt.jobs.unwrap_or_else(num_cpus::get),
         opt.prefix.as_deref(),
     )?;
-    log::debug!("discovery phase done; sending main patchsets as commits");
+    log::debug!("discovery phase done; parsing files");
 
     // Collect our observations into patchsets so we can send them.
     let result = collector.join().await?;
+    log::debug!("file parsing complete; sending patchsets");
+
     let mut from = None;
     for patch_set in result.patchset_iter() {
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
@@ -143,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: write the mark file contents back into the store.
 
+    log::debug!("persist complete; exiting");
     Ok(())
 }
 

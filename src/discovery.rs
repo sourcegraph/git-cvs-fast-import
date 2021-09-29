@@ -9,15 +9,12 @@ use std::{
 };
 
 use comma_v::{Delta, DeltaText, Num, Sym};
-use flume::Sender;
+use flume::{Receiver, Sender};
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
 
-use crate::{
-    observer::{self, Observer},
-    output::Output,
-};
+use crate::{observer::Observer, output::Output};
 
 /// A task that parses each file it's given.
 ///
@@ -46,37 +43,8 @@ impl Discovery {
 
         // Start each worker.
         for _i in 0..jobs {
-            let local_rx = rx.clone();
-            let local_commit = observer.clone();
-            let local_output = output.clone();
-            let local_prefix = prefix.map(OsString::from);
-
-            task::spawn(async move {
-                // recv_async() ultimately returns a RecvError in the error
-                // path, which only has one possible value: Disconnected.
-                // Therefore we don't need to interrogate an error return any
-                // further, it just means we should terminate the worker.
-                while let Ok(path) = local_rx.recv_async().await {
-                    if fs::metadata(&path)?.is_dir() {
-                        continue;
-                    }
-
-                    log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
-                    if let Err(e) =
-                        handle_path(&local_output, &local_commit, &path, local_prefix.as_ref())
-                            .await
-                    {
-                        log::warn!(
-                            "error processing {}: {:?}",
-                            String::from_utf8_lossy(path.as_bytes()),
-                            e
-                        );
-                        continue;
-                    }
-                }
-
-                Ok::<(), anyhow::Error>(())
-            });
+            let worker = Worker::new(&rx, observer, output, prefix);
+            task::spawn(async move { worker.work().await });
         }
 
         Self { tx }
@@ -88,117 +56,170 @@ impl Discovery {
     }
 }
 
-/// Parses and processes the given RCS file.
-async fn handle_path(
-    output: &Output,
-    observer: &Observer,
-    path: &OsStr,
-    prefix: Option<&OsString>,
-) -> anyhow::Result<()> {
-    let cv = comma_v::parse(&fs::read(path)?)?;
-    let disp = path.to_string_lossy();
-    let real_path = munge_raw_path(Path::new(path), prefix);
-
-    // Tags are defined as symbols in the RCS admin area, so we have them up
-    // front rather than as we parse each revision. Let's set up a revision ->
-    // tags map that we can use to send tags as we send revisions.
-    let mut revision_tags: HashMap<Num, Vec<Sym>> = HashMap::new();
-    for (tag, revision) in cv.admin.symbols.iter() {
-        revision_tags
-            .entry(revision.clone())
-            .or_default()
-            .push(tag.clone());
-    }
-
-    // Start at the head and work our way down.
-    let head_num = match cv.head() {
-        Some(num) => num,
-        None => anyhow::bail!("{}: cannot find HEAD revision", disp),
-    };
-    let (mut delta, mut delta_text) = cv.revision(head_num).unwrap();
-    log::trace!("{}: found HEAD revision {}", disp, head_num);
-    let mut file = File::new(delta_text.text.as_cursor())?;
-
-    let mark = handle_file_version(
-        output,
-        observer,
-        &file,
-        head_num,
-        revision_tags.get(&head_num),
-        delta,
-        delta_text,
-        &real_path,
-    )
-    .await?;
-    log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
-
-    while let Some(next_num) = &delta.next {
-        // TODO: handle branches.
-        let rev = cv.revision(next_num).unwrap();
-        delta = rev.0;
-        delta_text = rev.1;
-
-        log::trace!("{}: iterated to {}", &disp, next_num);
-
-        let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
-        file.apply_in_place(&commands)?;
-
-        let mark = handle_file_version(
-            output,
-            observer,
-            &file,
-            next_num,
-            revision_tags.get(&next_num),
-            delta,
-            delta_text,
-            &real_path,
-        )
-        .await?;
-        log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
-    }
-
-    Ok(())
+/// Worker represents an individual worker task processing RCS files.
+struct Worker {
+    observer: Observer,
+    output: Output,
+    prefix: Option<OsString>,
+    rx: Receiver<OsString>,
 }
 
-async fn handle_file_version(
-    output: &Output,
-    observer: &observer::Observer,
-    file: &File,
-    revision: &Num,
-    tags: Option<&Vec<Sym>>,
-    delta: &Delta,
-    delta_text: &DeltaText,
-    real_path: &OsStr,
-) -> anyhow::Result<Option<Mark>> {
-    let mark = match &delta.state {
-        Some(state) if state == b"dead".as_ref() => None,
-        _ => Some(output.blob(Blob::new(&file.as_bytes())).await?),
-    };
-
-    let id = observer
-        .commit(
-            real_path,
-            revision,
-            &delta.branches,
-            mark,
-            delta,
-            delta_text,
-        )
-        .await?;
-
-    if let Some(tags) = tags {
-        for tag in tags {
-            observer.tag(tag, id).await;
+impl Worker {
+    /// Instantiates a new worker.
+    fn new(
+        rx: &Receiver<OsString>,
+        observer: &Observer,
+        output: &Output,
+        prefix: Option<&OsStr>,
+    ) -> Self {
+        Self {
+            observer: observer.clone(),
+            output: output.clone(),
+            prefix: prefix.map(OsString::from),
+            rx: rx.clone(),
         }
     }
 
-    Ok(mark)
+    /// Listens on the worker queue for RCS paths and handles them.
+    async fn work(&self) -> anyhow::Result<()> {
+        // recv_async() ultimately returns a RecvError in the error path, which
+        // only has one possible value: Disconnected. Therefore we don't need to
+        // interrogate an error return any further, it just means we should
+        // terminate the worker.
+        while let Ok(path) = self.rx.recv_async().await {
+            if fs::metadata(&path)?.is_dir() {
+                continue;
+            }
+
+            log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
+            if let Err(e) = self.handle_path(&path).await {
+                log::warn!(
+                    "error processing {}: {:?}",
+                    String::from_utf8_lossy(path.as_bytes()),
+                    e
+                );
+                continue;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles an individual RCS file.
+    async fn handle_path(&self, path: &OsStr) -> anyhow::Result<()> {
+        // Parse the ,v file.
+        let cv = comma_v::parse(&fs::read(path)?)?;
+
+        // Set up an easier to display version of the path for logging purposes.
+        let disp = path.to_string_lossy();
+
+        // Calculate the real path of the file in the repository.
+        let real_path = munge_raw_path(Path::new(path), &self.prefix);
+
+        // Tags are defined as symbols in the RCS admin area, so we have them up
+        // front rather than as we parse each revision. Let's set up a revision
+        // -> tags map that we can use to send tags as we send revisions.
+        let mut revision_tags: HashMap<Num, Vec<Sym>> = HashMap::new();
+        for (tag, revision) in cv.admin.symbols.iter() {
+            revision_tags
+                .entry(revision.clone())
+                .or_default()
+                .push(tag.clone());
+        }
+
+        // Set up the file revision handler.
+        let handler = FileRevisionHandler {
+            worker: self,
+            revision_tags,
+            real_path: &real_path,
+        };
+
+        // It's time to parse each revision and send each one to the various
+        // places they need to go. Let's start at the HEAD.
+        let head_num = match cv.head() {
+            Some(num) => num,
+            None => anyhow::bail!("{}: cannot find HEAD revision", disp),
+        };
+        let (mut delta, mut delta_text) = cv.revision(head_num).unwrap();
+        log::trace!("{}: found HEAD revision {}", disp, head_num);
+        let mut file = File::new(delta_text.text.as_cursor())?;
+
+        let mark = handler
+            .handle_revision(&file, head_num, delta, delta_text)
+            .await?;
+        log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
+
+        // Now we can work our way down the branch.
+        //
+        // TODO: handle moving back up on branches.
+        while let Some(next_num) = &delta.next {
+            let rev = cv.revision(next_num).unwrap();
+            delta = rev.0;
+            delta_text = rev.1;
+
+            log::trace!("{}: iterated to {}", &disp, next_num);
+
+            let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
+            file.apply_in_place(&commands)?;
+
+            let mark = handler
+                .handle_revision(&file, next_num, delta, delta_text)
+                .await?;
+            log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
+        }
+
+        Ok(())
+    }
+}
+
+/// Handles individual revisions of a single file.
+struct FileRevisionHandler<'a> {
+    worker: &'a Worker,
+    revision_tags: HashMap<Num, Vec<Sym>>,
+    real_path: &'a OsStr,
+}
+
+impl FileRevisionHandler<'_> {
+    /// Handles a single revision of a file.
+    async fn handle_revision(
+        &self,
+        file: &File,
+        revision: &Num,
+        delta: &Delta,
+        delta_text: &DeltaText,
+    ) -> anyhow::Result<Option<Mark>> {
+        let mark = match &delta.state {
+            Some(state) if state == b"dead".as_ref() => None,
+            _ => Some(self.worker.output.blob(Blob::new(&file.as_bytes())).await?),
+        };
+
+        let id = self
+            .worker
+            .observer
+            .commit(
+                self.real_path,
+                revision,
+                &delta.branches,
+                mark,
+                delta,
+                delta_text,
+            )
+            .await?;
+
+        if let Some(tags) = self.revision_tags.get(revision) {
+            for tag in tags {
+                self.worker.observer.tag(tag, id).await;
+            }
+        }
+
+        Ok(mark)
+    }
 }
 
 /// Strips CVSROOT-specific components of the file path: specifically, removing
 /// the ,v suffix if present and stripping the Attic if it's the last directory
 /// in the path. Returns a newly allocated OsString.
-fn munge_raw_path(input: &Path, prefix: Option<&OsString>) -> OsString {
+fn munge_raw_path(input: &Path, prefix: &Option<OsString>) -> OsString {
     let unprefixed = match prefix {
         Some(prefix) => input.strip_prefix(prefix).unwrap_or(input),
         None => input,
@@ -245,9 +266,7 @@ mod tests {
             assert_eq!(
                 munge_raw_path(
                     Path::new(OsStr::from_bytes($input)),
-                    $prefix
-                        .map(|prefix| OsString::from(OsStr::from_bytes(prefix)))
-                        .as_ref()
+                    &$prefix.map(|prefix| OsString::from(OsStr::from_bytes(prefix)))
                 ),
                 OsString::from(OsStr::from_bytes($want))
             )
