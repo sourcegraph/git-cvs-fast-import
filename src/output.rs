@@ -8,7 +8,7 @@ use git_fast_import::{Mark, Writer};
 use thiserror::Error;
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     task::{self, JoinHandle},
@@ -26,7 +26,7 @@ where
     P: AsRef<Path>,
     W: Debug + Write + Send + 'static,
 {
-    let (tx, rx) = unbounded_channel();
+    let (tx, rx) = mpsc::unbounded_channel();
     let mark_file = mark_file.map(|path| path.as_ref().to_path_buf());
 
     (
@@ -48,6 +48,15 @@ impl Output {
     pub(crate) async fn commit(&self, commit: git_fast_import::Commit) -> anyhow::Result<Mark> {
         let (tx, rx) = oneshot::channel();
         self.tx.send(Command::Commit(commit, tx)).map_err(|e| {
+            log::error!("received command error: {}", &e);
+            e
+        })?;
+        Ok(rx.await?)
+    }
+
+    pub(crate) async fn tag(&self, tag: git_fast_import::Tag) -> anyhow::Result<Mark> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send(Command::Tag(tag, tx)).map_err(|e| {
             log::error!("received command error: {}", &e);
             e
         })?;

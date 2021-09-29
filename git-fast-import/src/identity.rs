@@ -8,7 +8,7 @@ use std::{
 /// Git identities always include an "e-mail" (which is not actually checked for
 /// validity), and may include a real name as well. A commit identity also
 /// includes the time the action took place.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Identity {
     name: Option<String>,
     email: String,

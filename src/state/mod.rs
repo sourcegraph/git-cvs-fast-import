@@ -29,16 +29,16 @@ pub(crate) struct Commit {
 }
 
 #[derive(Debug)]
-struct PatchSet {
-    branch: Vec<u8>,
-    time: SystemTime,
-    file_revisions: Vec<FileRevisionID>,
+pub(crate) struct PatchSet {
+    pub(crate) branch: Vec<u8>,
+    pub(crate) time: SystemTime,
+    pub(crate) file_revisions: Vec<FileRevisionID>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct MarkedCommit {
-    mark: Option<Mark>,
-    commit: Commit,
+    pub(crate) mark: Option<Mark>,
+    pub(crate) commit: Commit,
 }
 
 #[derive(Debug)]
@@ -62,7 +62,10 @@ pub(crate) struct Manager {
     tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileRevisionID>>>>,
 
     // Mapping of patchset marks to patchsets.
-    patchset_marks: Arc<RwLock<HashMap<Mark, Arc<PatchSet>>>>,
+    patchset_marks: Arc<RwLock<BTreeMap<Mark, Arc<PatchSet>>>>,
+
+    // Mapping of file revisions to patchsets.
+    file_revision_patchsets: Arc<RwLock<BTreeMap<FileRevisionID, Vec<Mark>>>>,
 }
 
 // TODO: methods to interact with a database store.
@@ -166,14 +169,24 @@ impl Manager {
     ) where
         I: Iterator<Item = FileRevisionID>,
     {
-        self.patchset_marks.write().await.insert(
-            mark,
-            Arc::new(PatchSet {
-                branch,
-                time,
-                file_revisions: file_id_iter.collect(),
-            }),
-        );
+        let patchset = PatchSet {
+            branch,
+            time,
+            file_revisions: file_id_iter.collect(),
+        };
+
+        let mut file_revision_patchsets_map = self.file_revision_patchsets.write().await;
+        for id in patchset.file_revisions.iter() {
+            file_revision_patchsets_map
+                .entry(*id)
+                .or_default()
+                .push(mark);
+        }
+
+        self.patchset_marks
+            .write()
+            .await
+            .insert(mark, Arc::new(patchset));
     }
 
     pub(crate) async fn add_tag(&self, tag: Vec<u8>, id: FileRevisionID) {
@@ -226,6 +239,33 @@ impl Manager {
             Ok(marked_commit.mark)
         } else {
             Err(Error::NoMark(file_revision.clone()))
+        }
+    }
+
+    pub(crate) async fn get_patchsets_for_file_revision(
+        &self,
+        file_revision: &FileRevisionKey,
+    ) -> Result<Vec<Mark>> {
+        if let Some(file_revision_id) = self.file_revisions.read().await.get(file_revision) {
+            if let Some(patchsets) = self
+                .file_revision_patchsets
+                .read()
+                .await
+                .get(file_revision_id)
+            {
+                Ok(patchsets.clone())
+            } else {
+                Ok(Vec::new())
+            }
+        } else {
+            Err(Error::NoFileRevisionForKey(file_revision.clone()))
+        }
+    }
+
+    pub(crate) async fn get_patchset_from_mark(&self, mark: &Mark) -> Result<Arc<PatchSet>> {
+        match self.patchset_marks.read().await.get(mark) {
+            Some(patchset) => Ok(patchset.clone()),
+            None => Err(Error::NoPatchSetForMark(*mark)),
         }
     }
 

@@ -2,12 +2,14 @@ use std::{
     ffi::{OsStr, OsString},
     io::{self, BufRead, BufReader, Write},
     os::unix::prelude::OsStrExt,
-    time::Duration,
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
 
 use discovery::Discovery;
 
 use git_cvs_fast_import_store::Store;
+use git_fast_import::{CommitBuilder, FileCommand, Identity, Mark};
 use observer::{Collector, Observer};
 use output::Output;
 use patchset::PatchSet;
@@ -88,7 +90,10 @@ async fn main() -> anyhow::Result<()> {
     log::debug!("file parsing complete; sending patchsets");
 
     send_patchsets(&state, &output, result.patchset_iter()).await?;
-    log::debug!("main patchsets sent; starting tag detection");
+    log::debug!("main patchsets sent; sending tags");
+
+    send_tags(&state, &output).await?;
+    log::debug!("tags sent");
 
     // We need to ensure all references to output are dropped before the output
     // handle will finish up.
@@ -176,13 +181,9 @@ where
 
     for patchset in patchset_iter {
         // We have a patchset, so let's turn it into a Git commit.
-        let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
+        let mut builder = CommitBuilder::new("refs/heads/main".into());
         builder
-            .committer(git_fast_import::Identity::new(
-                None,
-                patchset.author.clone(),
-                patchset.time,
-            )?)
+            .committer(Identity::new(None, patchset.author.clone(), patchset.time)?)
             .message(patchset.message.clone());
 
         // As alluded to earlier, if we have a parent mark (and we usually
@@ -198,12 +199,12 @@ where
         // with the file revision) or not (in which case it's a deletion).
         for (path, file_id) in patchset.file_content_iter() {
             match state.get_mark_from_file_id(*file_id).await? {
-                Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
+                Some(mark) => builder.add_file_command(FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
                     mark,
                     path: path.to_string_lossy().into(),
                 }),
-                None => builder.add_file_command(git_fast_import::FileCommand::Delete {
+                None => builder.add_file_command(FileCommand::Delete {
                     path: path.to_string_lossy().into(),
                 }),
             };
@@ -229,6 +230,85 @@ where
             .await;
 
         from = Some(mark);
+    }
+
+    Ok(())
+}
+
+/// Send tags to git-fast-import.
+async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
+    // TODO: allow the identity to be configured.
+    let identity = Identity::new(None, "git-cvs-fast-import".into(), SystemTime::now())?;
+
+    for tag in state.tag_iter().await {
+        // For each tag, we need to fake a Git commit with the correct content,
+        // since CVS tags don't map onto Git tags especially gracefully, then
+        // send a relevant tag.
+        //
+        // The tricky part here is knowing what the parent commit should be:
+        // different CVS file revisions might have different patchsets as their
+        // logical parents! Since this is essentially unsolvable without
+        // splitting tags into per-file tags (which obfuscates the underlying
+        // CVS tag), we'll use a heuristic: the _last_ patchset that any
+        // revision in the tag belongs to will be the parent.
+
+        let mut parent_patchset: Option<(Mark, SystemTime)> = None;
+        let tag_str = String::from_utf8_lossy(&tag).into_owned();
+
+        let mut builder = CommitBuilder::new(format!("refs/heads/tags/{}", &tag_str));
+        // TODO: allow the identity to be configured.
+        builder
+            .committer(identity.clone())
+            .message(format!("Fake commit for tag {}.", &tag_str));
+
+        // Unlike regular commits, we'll remove all the file content and
+        // then attach the new content that is known to be on the tag. This
+        // means that Git will have to figure out what the diffs look like.
+        builder.add_file_command(FileCommand::DeleteAll);
+        for (key, marked_commit) in state.get_tag(&tag).await? {
+            let path = key.path.to_string_lossy().into_owned();
+
+            match marked_commit.mark {
+                Some(mark) => builder.add_file_command(FileCommand::Modify {
+                    mode: git_fast_import::Mode::Normal,
+                    mark,
+                    path,
+                }),
+                None => builder.add_file_command(FileCommand::Delete { path }),
+            };
+
+            // Find out which patchset this file revision is in, if any, and
+            // check if it's newer than what we've seen.
+            if let Some(patchset_mark) = state.get_patchsets_for_file_revision(&key).await?.last() {
+                let patchset = state.get_patchset_from_mark(patchset_mark).await?;
+
+                if let Some((mark, time)) = &parent_patchset {
+                    if time < &patchset.time {
+                        parent_patchset = Some((*mark, patchset.time));
+                    }
+                } else {
+                    parent_patchset = Some((*patchset_mark, patchset.time));
+                }
+            }
+        }
+
+        // Set the parent commit, if any.
+        if let Some((from, _)) = parent_patchset {
+            builder.from(from);
+        }
+
+        // Now we can send the commit.
+        let mark = output.commit(builder.build()?).await?;
+
+        // And we can tag the commit.
+        output
+            .tag(git_fast_import::Tag::new(
+                tag_str.clone(),
+                mark,
+                identity.clone(),
+                format!("Replicating CVS tag {}.", tag_str),
+            ))
+            .await?;
     }
 
     Ok(())
