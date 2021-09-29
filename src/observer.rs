@@ -1,20 +1,15 @@
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
-use binary_heap_plus::{BinaryHeap, MinComparator};
 use comma_v::{Delta, DeltaText, Num, Sym};
 use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
 use thiserror::Error;
 use tokio::{
-    sync::{
-        mpsc::{error::SendError, unbounded_channel, UnboundedSender},
-        Mutex,
-    },
+    sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender},
     task::{self, JoinHandle},
 };
 
