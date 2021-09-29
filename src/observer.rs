@@ -9,34 +9,38 @@ use patchset::{Detector, PatchSet};
 use thiserror::Error;
 use tokio::{
     sync::{
-        mpsc::{error::SendError, unbounded_channel, UnboundedSender},
+        mpsc::{self, error::SendError, UnboundedSender},
         oneshot,
     },
     task::{self, JoinHandle},
 };
 
-use crate::state::{self, FileID, FileRevision, State};
+use crate::state::{self, FileRevisionID, FileRevisionKey, Manager};
 
+/// An `Observer` receives a stream of file revisions and hands them to both the
+/// patchset detector and the state manager.
 #[derive(Clone, Debug)]
 pub(crate) struct Observer {
-    commit_tx: UnboundedSender<CommitMessage>,
-    state: State,
+    file_revision_tx: UnboundedSender<Message>,
+    state: Manager,
 }
 
+/// A message sent to the observer worker.
+///
+/// This is public because it's exposed within the error type, but otherwise is
+/// an implementation detail.
 #[derive(Debug)]
-pub(crate) struct CommitMessage {
-    commit: Commit,
-    id_tx: oneshot::Sender<FileID>,
+pub(crate) struct Message {
+    file_revision: FileRevision,
+    id_tx: oneshot::Sender<FileRevisionID>,
 }
 
+/// A file revision sent to an observer worker.
+///
+/// This is public because it's exposed within the error type, but otherwise is
+/// an implementation detail.
 #[derive(Debug)]
-pub(crate) struct Collector {
-    join_handle: JoinHandle<Result<Detector<usize>, Error>>,
-    state: State,
-}
-
-#[derive(Debug)]
-pub(crate) struct Commit {
+pub(crate) struct FileRevision {
     path: OsString,
     revision: Vec<u8>,
     mark: Option<Mark>,
@@ -47,40 +51,40 @@ pub(crate) struct Commit {
 }
 
 impl Observer {
-    /// Constructs a new commit observer, along with a collector that can be
-    /// awaited once all observers have been dropped to receive the final result
-    /// of the observations.
-    pub(crate) fn new(delta: Duration, state: State) -> (Self, Collector) {
-        let (commit_tx, mut commit_rx) = unbounded_channel::<CommitMessage>();
+    /// Constructs a new file revision observer, along with a collector that can
+    /// be awaited once all observers have been dropped to receive the final
+    /// result of the observations.
+    pub(crate) fn new(delta: Duration, state: Manager) -> (Self, Collector) {
+        let (file_revision_tx, mut file_revision_rx) = mpsc::unbounded_channel::<Message>();
 
         let task_state = state.clone();
         let join_handle = task::spawn(async move {
             let mut detector = Detector::new(delta);
 
-            while let Some(msg) = commit_rx.recv().await {
+            while let Some(msg) = file_revision_rx.recv().await {
                 let id = task_state
                     .add_file_revision(
-                        FileRevision {
-                            path: msg.commit.path.clone(),
-                            revision: msg.commit.revision,
+                        FileRevisionKey {
+                            path: msg.file_revision.path.clone(),
+                            revision: msg.file_revision.revision,
                         },
                         state::Commit {
-                            branches: msg.commit.branches.clone(),
-                            author: msg.commit.author.clone(),
-                            message: msg.commit.message.clone(),
-                            time: msg.commit.time,
+                            branches: msg.file_revision.branches.clone(),
+                            author: msg.file_revision.author.clone(),
+                            message: msg.file_revision.message.clone(),
+                            time: msg.file_revision.time,
                         },
-                        msg.commit.mark,
+                        msg.file_revision.mark,
                     )
                     .await?;
 
                 detector.add_file_commit(
-                    msg.commit.path,
+                    msg.file_revision.path,
                     id,
-                    msg.commit.branches,
-                    msg.commit.author,
-                    msg.commit.message,
-                    msg.commit.time,
+                    msg.file_revision.branches,
+                    msg.file_revision.author,
+                    msg.file_revision.message,
+                    msg.file_revision.time,
                 );
 
                 msg.id_tx
@@ -93,14 +97,16 @@ impl Observer {
 
         (
             Self {
-                commit_tx,
-                state: state.clone(),
+                file_revision_tx,
+                state,
             },
-            Collector { join_handle, state },
+            Collector { join_handle },
         )
     }
 
-    pub(crate) async fn commit(
+    /// Observe a single file revision, and return its ID as stored in the state
+    /// manager.
+    pub(crate) async fn file_revision(
         &self,
         path: &OsStr,
         revision: &Num,
@@ -108,11 +114,11 @@ impl Observer {
         id: Option<Mark>,
         delta: &Delta,
         text: &DeltaText,
-    ) -> Result<FileID, Error> {
+    ) -> Result<FileRevisionID, Error> {
         let (tx, rx) = oneshot::channel();
 
-        self.commit_tx.send(CommitMessage {
-            commit: Commit {
+        self.file_revision_tx.send(Message {
+            file_revision: FileRevision {
                 path: path.to_os_string(),
                 revision: revision.to_vec(),
                 mark: id,
@@ -127,23 +133,32 @@ impl Observer {
         Ok(rx.await?)
     }
 
-    pub(crate) async fn tag(&self, tag: &Sym, file_id: FileID) {
+    /// Observe a single file revision tag.
+    pub(crate) async fn tag(&self, tag: &Sym, file_id: FileRevisionID) {
         self.state.add_tag(tag.to_vec(), file_id).await;
     }
 }
 
+/// The `Collector` is used to wait for all file revisions to be observed, and
+/// then can be used to access the observation result.
+#[derive(Debug)]
+pub(crate) struct Collector {
+    join_handle: JoinHandle<Result<Detector<usize>, Error>>,
+}
+
+/// An object that can be joined to wait for the results of the [`Observer`].
 impl Collector {
+    /// Waits for the observations to be complete, the results their results.
     pub(crate) async fn join(self) -> Result<ObservationResult, Error> {
         Ok(ObservationResult {
             patchsets: self.join_handle.await??.into_patchset_iter().collect(),
-            state: self.state,
         })
     }
 }
 
+/// The result of observing file revisions and tags with [`Observer`].
 pub(crate) struct ObservationResult {
     patchsets: Vec<PatchSet<usize>>,
-    state: State,
 }
 
 impl ObservationResult {
@@ -152,6 +167,7 @@ impl ObservationResult {
     }
 }
 
+/// Errors that can be returned when observing.
 #[derive(Debug, Error)]
 pub(crate) enum Error {
     #[error(transparent)]
@@ -161,7 +177,7 @@ pub(crate) enum Error {
     OneshotRecv(#[from] oneshot::error::RecvError),
 
     #[error(transparent)]
-    Send(#[from] SendError<CommitMessage>),
+    Send(#[from] SendError<Message>),
 
     #[error(transparent)]
     State(#[from] state::Error),

@@ -11,11 +11,11 @@ use git_cvs_fast_import_store::Store;
 use observer::{Collector, Observer};
 use output::Output;
 use patchset::PatchSet;
-use state::FileID;
+use state::FileRevisionID;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
 
-use crate::state::State;
+use crate::state::Manager;
 
 mod discovery;
 mod observer;
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Set up our state, and ensure we have a connection to our persistent
     // store.
-    let state = State::new();
+    let state = Manager::new();
     let store = Store::new(opt.state_file.as_os_str())?;
 
     // If we have marks, dump them to a temporary file.
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 /// If an item when iterating `paths` returns an error, then that error will be
 /// returned from this function.
 fn discover_files<Error, PathIterator>(
-    state: &State,
+    state: &Manager,
     output: &Output,
     delta: Duration,
     paths: PathIterator,
@@ -126,8 +126,10 @@ where
     // persist file revisions and detect patchsets.
     let (observer, collector) = Observer::new(delta, state.clone());
 
+    // Create our discovery worker pool.
     let discovery = Discovery::new(output, &observer, parallel_jobs, prefix);
 
+    // Send all the input paths to the discovery workers.
     for r in paths {
         match r {
             Ok(path) => {
@@ -161,15 +163,19 @@ fn dump_marks_to_file(store: &Store) -> anyhow::Result<Option<NamedTempFile>> {
 
 /// Send patchsets to git-fast-import.
 async fn send_patchsets<'a, I>(
-    state: &State,
+    state: &Manager,
     output: &Output,
     patchset_iter: I,
 ) -> anyhow::Result<()>
 where
-    I: Iterator<Item = &'a PatchSet<FileID>>,
+    I: Iterator<Item = &'a PatchSet<FileRevisionID>>,
 {
+    // All commits except for the very first one will refer to their parent via
+    // the from marker, so let's set that up.
     let mut from = None;
+
     for patchset in patchset_iter {
+        // We have a patchset, so let's turn it into a Git commit.
         let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
         builder
             .committer(git_fast_import::Identity::new(
@@ -179,10 +185,17 @@ where
             )?)
             .message(patchset.message.clone());
 
+        // As alluded to earlier, if we have a parent mark (and we usually
+        // will), we need to ensure that gets set up.
         if let Some(mark) = from {
             builder.from(mark);
         }
 
+        // Now we set up the file commands in the commit: the patchset will give
+        // us the file revision ID for each file that was modified or deleted in
+        // the commit. From there, we need to ascertain if that maps to a mark
+        // (in which case it's a modification, since there's content associated
+        // with the file revision) or not (in which case it's a deletion).
         for (path, file_id) in patchset.file_content_iter() {
             match state.get_mark_from_file_id(*file_id).await? {
                 Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
@@ -196,8 +209,12 @@ where
             };
         }
 
+        // Actually send the commit to git-fast-import and get the commit mark
+        // back.
         let mark = output.commit(builder.build()?).await?;
 
+        // Save the patchset and its mark to the state (and eventually the
+        // store).
         state
             .add_patchset(
                 mark,

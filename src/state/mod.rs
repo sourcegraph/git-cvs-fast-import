@@ -12,10 +12,10 @@ use tokio::sync::RwLock;
 mod error;
 pub(crate) use self::error::{Error, Result};
 
-pub type FileID = usize;
+pub type FileRevisionID = usize;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FileRevision {
+pub(crate) struct FileRevisionKey {
     pub(crate) path: OsString,
     pub(crate) revision: Vec<u8>,
 }
@@ -32,7 +32,7 @@ pub(crate) struct Commit {
 struct PatchSet {
     branch: Vec<u8>,
     time: SystemTime,
-    file_revisions: Vec<FileID>,
+    file_revisions: Vec<FileRevisionID>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,25 +48,25 @@ pub(crate) struct MarkedPatchSet {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct State {
+pub(crate) struct Manager {
     // Base storage of every revision seen. Not exposed to the outside.
-    file_revisions: Arc<RwLock<BTreeMap<Arc<FileRevision>, FileID>>>,
+    file_revisions: Arc<RwLock<BTreeMap<Arc<FileRevisionKey>, FileRevisionID>>>,
 
     // Mapping of revisions to commits and marks.
-    file_revision_commits: Arc<RwLock<Vec<(Arc<FileRevision>, MarkedCommit)>>>,
+    file_revision_commits: Arc<RwLock<Vec<(Arc<FileRevisionKey>, MarkedCommit)>>>,
 
     // Mapping of file marks to revisions and commits.
-    file_marks: Arc<RwLock<HashMap<Mark, FileID>>>,
+    file_marks: Arc<RwLock<HashMap<Mark, FileRevisionID>>>,
 
     // Mapping of tags to revisions and commits.
-    tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileID>>>>,
+    tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileRevisionID>>>>,
 
     // Mapping of patchset marks to patchsets.
     patchset_marks: Arc<RwLock<HashMap<Mark, Arc<PatchSet>>>>,
 }
 
 // TODO: methods to interact with a database store.
-impl State {
+impl Manager {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -132,7 +132,7 @@ impl State {
 
     pub(crate) async fn add_file_revision(
         &self,
-        file_revision: FileRevision,
+        file_revision: FileRevisionKey,
         commit: Commit,
         mark: Option<Mark>,
     ) -> Result<usize> {
@@ -164,7 +164,7 @@ impl State {
         time: SystemTime,
         file_id_iter: I,
     ) where
-        I: Iterator<Item = FileID>,
+        I: Iterator<Item = FileRevisionID>,
     {
         self.patchset_marks.write().await.insert(
             mark,
@@ -176,11 +176,14 @@ impl State {
         );
     }
 
-    pub(crate) async fn add_tag(&self, tag: Vec<u8>, id: FileID) {
+    pub(crate) async fn add_tag(&self, tag: Vec<u8>, id: FileRevisionID) {
         self.tags.write().await.entry(tag).or_default().push(id);
     }
 
-    pub(crate) async fn get_file_revision_from_id(&self, id: FileID) -> Result<Arc<FileRevision>> {
+    pub(crate) async fn get_file_revision_from_id(
+        &self,
+        id: FileRevisionID,
+    ) -> Result<Arc<FileRevisionKey>> {
         match self.file_revision_commits.read().await.get(id) {
             Some((file_revision, marked_commit)) => Ok(file_revision.clone()),
             None => Err(Error::NoFileRevisionForID(id)),
@@ -190,7 +193,7 @@ impl State {
     pub(crate) async fn get_file_revision_from_mark(
         &self,
         mark: &Mark,
-    ) -> Result<Arc<FileRevision>> {
+    ) -> Result<Arc<FileRevisionKey>> {
         let file_revision_commits_vec = self.file_revision_commits.read().await;
 
         match self
@@ -206,7 +209,7 @@ impl State {
         }
     }
 
-    pub(crate) async fn get_mark_from_file_id(&self, id: FileID) -> Result<Option<Mark>> {
+    pub(crate) async fn get_mark_from_file_id(&self, id: FileRevisionID) -> Result<Option<Mark>> {
         match self.file_revision_commits.read().await.get(id) {
             Some((_file_revision, marked_commit)) => Ok(marked_commit.mark),
             None => Err(Error::NoFileRevisionForID(id)),
@@ -215,7 +218,7 @@ impl State {
 
     pub(crate) async fn get_mark_from_file_revision(
         &self,
-        file_revision: &FileRevision,
+        file_revision: &FileRevisionKey,
     ) -> Result<Option<Mark>> {
         if let Some(id) = self.file_revisions.read().await.get(file_revision) {
             let (_revision, marked_commit) = &self.file_revision_commits.read().await[*id];
@@ -229,7 +232,7 @@ impl State {
     pub(crate) async fn get_tag(
         &self,
         tag: &[u8],
-    ) -> Result<Vec<(Arc<FileRevision>, MarkedCommit)>> {
+    ) -> Result<Vec<(Arc<FileRevisionKey>, MarkedCommit)>> {
         if let Some(ids) = self.tags.read().await.get(tag) {
             let file_revision_commits_vec = self.file_revision_commits.read().await;
 

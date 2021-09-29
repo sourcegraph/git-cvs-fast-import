@@ -196,7 +196,7 @@ impl FileRevisionHandler<'_> {
         let id = self
             .worker
             .observer
-            .commit(
+            .file_revision(
                 self.real_path,
                 revision,
                 &delta.branches,
