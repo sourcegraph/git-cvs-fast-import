@@ -2,7 +2,6 @@ use std::{
     ffi::{OsStr, OsString},
     io::{self, BufRead, BufReader, Write},
     os::unix::prelude::OsStrExt,
-    path::Path,
     time::Duration,
 };
 
@@ -11,10 +10,12 @@ use discovery::Discovery;
 use git_cvs_fast_import_store::Store;
 use observer::{Collector, Observer};
 use output::Output;
+use patchset::PatchSet;
+use state::FileID;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
 
-use crate::state::{FileRevision, State};
+use crate::state::State;
 
 mod discovery;
 mod observer;
@@ -73,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     // and the state.
     log::debug!("starting file discovery");
     let collector = discover_files(
-        state.clone(),
+        &state,
         &output,
         opt.delta,
         BufReader::new(io::stdin()).split(b'\n'),
@@ -86,58 +87,14 @@ async fn main() -> anyhow::Result<()> {
     let result = collector.join().await?;
     log::debug!("file parsing complete; sending patchsets");
 
-    let mut from = None;
-    for patch_set in result.patchset_iter() {
-        let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
-        builder
-            .committer(git_fast_import::Identity::new(
-                None,
-                patch_set.author.clone(),
-                patch_set.time,
-            )?)
-            .message(patch_set.message.clone());
-
-        if let Some(mark) = from {
-            builder.from(mark);
-        }
-
-        for (path, file_id) in patch_set.file_content_iter() {
-            match state.get_mark_from_file_id(*file_id).await? {
-                Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
-                    mode: git_fast_import::Mode::Normal,
-                    mark,
-                    path: path.to_string_lossy().into(),
-                }),
-                None => builder.add_file_command(git_fast_import::FileCommand::Delete {
-                    path: path.to_string_lossy().into(),
-                }),
-            };
-        }
-
-        let mark = output.commit(builder.build()?).await?;
-
-        state
-            .add_patchset(
-                mark,
-                b"main".to_vec(),
-                patch_set.time,
-                patch_set
-                    .file_revision_iter()
-                    .map(|(_path, ids)| ids)
-                    .flatten()
-                    .copied(),
-            )
-            .await;
-
-        from = Some(mark);
-    }
+    send_patchsets(&state, &output, result.patchset_iter()).await?;
     log::debug!("main patchsets sent; starting tag detection");
 
-    // We need to ensure all references to output are done before the output
+    // We need to ensure all references to output are dropped before the output
     // handle will finish up.
     drop(output);
 
-    // And now we wait.
+    // Now we wait for any remaining items to be written.
     output_handle.await??;
 
     log::debug!("persisting state to store");
@@ -154,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 /// If an item when iterating `paths` returns an error, then that error will be
 /// returned from this function.
 fn discover_files<Error, PathIterator>(
-    state: State,
+    state: &State,
     output: &Output,
     delta: Duration,
     paths: PathIterator,
@@ -167,7 +124,7 @@ where
 {
     // Set up the observer and collector that we'll use during file discovery to
     // persist file revisions and detect patchsets.
-    let (observer, collector) = Observer::new(delta, state);
+    let (observer, collector) = Observer::new(delta, state.clone());
 
     let discovery = Discovery::new(output, &observer, parallel_jobs, prefix);
 
@@ -200,4 +157,62 @@ fn dump_marks_to_file(store: &Store) -> anyhow::Result<Option<NamedTempFile>> {
         }
         None => Ok(None),
     }
+}
+
+/// Send patchsets to git-fast-import.
+async fn send_patchsets<'a, I>(
+    state: &State,
+    output: &Output,
+    patchset_iter: I,
+) -> anyhow::Result<()>
+where
+    I: Iterator<Item = &'a PatchSet<FileID>>,
+{
+    let mut from = None;
+    for patchset in patchset_iter {
+        let mut builder = git_fast_import::CommitBuilder::new("refs/heads/main".into());
+        builder
+            .committer(git_fast_import::Identity::new(
+                None,
+                patchset.author.clone(),
+                patchset.time,
+            )?)
+            .message(patchset.message.clone());
+
+        if let Some(mark) = from {
+            builder.from(mark);
+        }
+
+        for (path, file_id) in patchset.file_content_iter() {
+            match state.get_mark_from_file_id(*file_id).await? {
+                Some(mark) => builder.add_file_command(git_fast_import::FileCommand::Modify {
+                    mode: git_fast_import::Mode::Normal,
+                    mark,
+                    path: path.to_string_lossy().into(),
+                }),
+                None => builder.add_file_command(git_fast_import::FileCommand::Delete {
+                    path: path.to_string_lossy().into(),
+                }),
+            };
+        }
+
+        let mark = output.commit(builder.build()?).await?;
+
+        state
+            .add_patchset(
+                mark,
+                b"main".to_vec(),
+                patchset.time,
+                patchset
+                    .file_revision_iter()
+                    .map(|(_path, ids)| ids)
+                    .flatten()
+                    .copied(),
+            )
+            .await;
+
+        from = Some(mark);
+    }
+
+    Ok(())
 }
