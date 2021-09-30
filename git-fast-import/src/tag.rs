@@ -1,4 +1,4 @@
-use crate::{Command, Identity, Mark};
+use crate::{Command, Error, Identity, Mark};
 
 /// A `tag` fast-import command.
 #[derive(Debug)]
@@ -22,7 +22,7 @@ impl Tag {
 }
 
 impl Command for Tag {
-    fn write(&self, writer: &mut impl std::io::Write, mark: Mark) -> anyhow::Result<()> {
+    fn write(&self, writer: &mut impl std::io::Write, mark: Mark) -> Result<(), Error> {
         Ok(writeln!(
             writer,
             "tag {}\nmark {}\nfrom {}\ntagger {}\ndata {}\n{}",

@@ -1,5 +1,5 @@
 use std::{
-    io::{self, BufReader, Read, Seek},
+    io::{BufReader, Read, Seek},
     num::ParseIntError,
     str::FromStr,
 };
@@ -12,18 +12,8 @@ use nom::{
     Finish, IResult,
 };
 use rev_lines::RevLines;
-use thiserror::Error;
 
-use crate::Mark;
-
-#[derive(Error, Debug)]
-pub(crate) enum Error {
-    #[error(transparent)]
-    IoError(#[from] io::Error),
-
-    #[error("mark parsing error: {0:?}")]
-    MarkParsingError(nom::error::ErrorKind),
-}
+use crate::{Error, Mark};
 
 pub(crate) fn get_last_mark<R>(reader: R) -> Result<Option<Mark>, Error>
 where

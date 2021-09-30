@@ -9,6 +9,9 @@ pub use blob::Blob;
 mod commit;
 pub use commit::{Commit, CommitBuilder, FileCommand, Mode};
 
+mod error;
+pub use error::Error;
+
 mod identity;
 pub use identity::Identity;
 
@@ -52,7 +55,7 @@ where
     ///
     /// Note that `writer` must be ready to receive commands immediately, as
     /// `feature` commands will be sent to configure the receiver.
-    pub fn new<P>(writer: W, mark_file: P) -> anyhow::Result<Self>
+    pub fn new<P>(writer: W, mark_file: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
@@ -72,7 +75,7 @@ where
     }
 
     /// Sends a command that returns a mark to fast-import.
-    pub fn command<C>(&mut self, command: C) -> anyhow::Result<Mark>
+    pub fn command<C>(&mut self, command: C) -> Result<Mark, Error>
     where
         C: Command,
     {
@@ -84,17 +87,17 @@ where
     }
 
     /// Sends a `checkpoint` command to fast-import.
-    pub fn checkpoint(&mut self) -> anyhow::Result<()> {
+    pub fn checkpoint(&mut self) -> Result<(), Error> {
         Ok(writeln!(self.writer, "checkpoint")?)
     }
 
     /// Sends a `progress` command to fast-import.
-    pub fn progress(&mut self, message: &str) -> anyhow::Result<()> {
+    pub fn progress(&mut self, message: &str) -> Result<(), Error> {
         Ok(writeln!(self.writer, "progress {}", message)?)
     }
 
     /// Sends a `reset` command to fast-import.
-    pub fn reset(&mut self, branch_ref: &str, from: Option<Mark>) -> anyhow::Result<()> {
+    pub fn reset(&mut self, branch_ref: &str, from: Option<Mark>) -> Result<(), Error> {
         writeln!(self.writer, "reset {}", branch_ref)?;
         if let Some(from) = from {
             writeln!(self.writer, "from {}", from)?;
@@ -108,14 +111,14 @@ where
         self.next_mark
     }
 
-    fn send_generic_header(mut self) -> anyhow::Result<Self> {
+    fn send_generic_header(mut self) -> Result<Self, Error> {
         writeln!(self.writer, "feature done")?;
         writeln!(self.writer, "feature date-format=raw")?;
 
         Ok(self)
     }
 
-    fn send_mark_header<P>(mut self, mark_file: P) -> anyhow::Result<Self>
+    fn send_mark_header<P>(mut self, mark_file: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
@@ -140,5 +143,5 @@ where
 /// A mark-returning `git fast-import` command.
 pub trait Command {
     /// A function that writes the command in wire format to the given writer.
-    fn write(&self, writer: &mut impl Write, mark: Mark) -> anyhow::Result<()>;
+    fn write(&self, writer: &mut impl Write, mark: Mark) -> Result<(), Error>;
 }

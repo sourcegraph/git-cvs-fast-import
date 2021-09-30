@@ -3,7 +3,7 @@ use std::{
     io,
 };
 
-use crate::{Command, Identity, Mark};
+use crate::{Command, Error, Identity, Mark};
 
 /// A `commit` command stores a commit in the Git repository.
 #[derive(Debug)]
@@ -18,7 +18,7 @@ pub struct Commit {
 }
 
 impl Command for Commit {
-    fn write(&self, writer: &mut impl io::Write, mark: Mark) -> anyhow::Result<()> {
+    fn write(&self, writer: &mut impl io::Write, mark: Mark) -> Result<(), Error> {
         // Build up a buffer and then write.
         let mut buf = String::new();
         writeln!(buf, "commit {}", self.branch_ref)?;
@@ -196,14 +196,4 @@ impl Display for Mode {
             Mode::Symlink => write!(f, "120000"),
         }
     }
-}
-
-/// Possible errors when creating [`Commit`] instances.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("a committer must be provided")]
-    MissingCommitter,
-
-    #[error("a commit message must be provided")]
-    MissingCommitMessage,
 }
