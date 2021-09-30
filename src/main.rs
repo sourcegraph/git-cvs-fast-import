@@ -1,8 +1,9 @@
 use std::{
     ffi::{OsStr, OsString},
+    fs::File,
     io::{self, BufRead, BufReader, Write},
-    os::unix::prelude::OsStrExt,
-    sync::Arc,
+    os::unix::prelude::{MetadataExt, OsStrExt},
+    path::Path,
     time::{Duration, SystemTime},
 };
 
@@ -41,6 +42,9 @@ struct Opt {
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
 
+    #[structopt(flatten)]
+    output: output::Opt,
+
     #[structopt(
         short,
         long,
@@ -66,11 +70,11 @@ async fn main() -> anyhow::Result<()> {
     let state = Manager::new();
     let store = Store::new(opt.state_file.as_os_str())?;
 
-    // If we have marks, dump them to a temporary file.
+    // Set up the mark file for git-fast-import to import.
     let mark_file = dump_marks_to_file(&store)?;
 
-    // Set up our git-fast-import export.
-    let (output, output_handle) = output::new(io::stdout(), mark_file.as_ref());
+    // Set up our git-fast-import export using the marks, if any.
+    let (output, output_handle) = output::new(mark_file.as_ref(), opt.output);
 
     // Discover all files from stdin, and process each one into a new Collector
     // and the state.
@@ -102,12 +106,18 @@ async fn main() -> anyhow::Result<()> {
     // Now we wait for any remaining items to be written.
     output_handle.await??;
 
+    // git-fast-import wrote the marks to the mark file before exiting while we
+    // were waiting for the output handle, so we can now store that in the
+    // persistent store as well and remove the temporary file.
+    log::debug!("saving marks to store");
+    save_marks_from_file(&store, &mark_file)?;
+    mark_file.close()?;
+
+    // Finally, we can now store the in-memory state to the persistent store.
     log::debug!("persisting state to store");
     state.persist_to_store(&store).await?;
 
-    // TODO: write the mark file contents back into the store.
-
-    log::debug!("persist complete; exiting");
+    log::debug!("export complete; exiting");
     Ok(())
 }
 
@@ -152,18 +162,18 @@ where
 
 /// If marks exist in the store, dump them to a named temporary file that
 /// git-fast-import can read from.
-fn dump_marks_to_file(store: &Store) -> anyhow::Result<Option<NamedTempFile>> {
-    match store.connection()?.get_raw_marks()? {
-        Some(mut mark_reader) => {
-            let mut file = NamedTempFile::new()?;
+///
+/// If marks do not exist, then a new temporary file will be created and
+/// returned.
+fn dump_marks_to_file(store: &Store) -> anyhow::Result<NamedTempFile> {
+    let mut file = NamedTempFile::new()?;
 
-            io::copy(&mut mark_reader, &mut file)?;
-            file.flush()?;
-
-            Ok(Some(file))
-        }
-        None => Ok(None),
+    if let Some(mut mark_reader) = store.connection()?.get_raw_marks()? {
+        io::copy(&mut mark_reader, &mut file)?;
+        file.flush()?;
     }
+
+    Ok(file)
 }
 
 /// Send patchsets to git-fast-import.
@@ -312,4 +322,16 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Save the created marks back into the database.
+fn save_marks_from_file(store: &Store, mark_file: &NamedTempFile) -> anyhow::Result<()> {
+    // git fast-import will replace the temporary file under the same name,
+    // rather than just writing to it, so mark_file.reopen() fails as a result.
+    // Instead, we'll just use the path to open the file anew.
+    let file = File::open(mark_file)?;
+
+    Ok(store
+        .connection()?
+        .set_raw_marks(&file, file.metadata()?.size() as usize)?)
 }

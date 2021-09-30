@@ -7,6 +7,11 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] io::Error),
 
+    #[error(
+        "mark file is too large to write to the database: {size} bytes; maximum is {max} bytes"
+    )]
+    LargeMarkFile { max: i32, size: usize },
+
     #[error(transparent)]
     Refinery(#[from] refinery::Error),
 

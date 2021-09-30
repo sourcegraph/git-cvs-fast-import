@@ -1,6 +1,9 @@
-use std::io::{self, Read};
+use std::{
+    convert::TryInto,
+    io::{self, Read},
+};
 
-use rusqlite::{DatabaseName, OptionalExtension};
+use rusqlite::{blob::ZeroBlob, DatabaseName, OptionalExtension};
 
 use crate::error::Error;
 
@@ -31,13 +34,30 @@ impl Connection {
         )
     }
 
-    pub fn set_raw_marks<R: Read>(&mut self, mut reader: R) -> Result<(), Error> {
+    pub fn set_raw_marks<R: Read>(&mut self, mut reader: R, size: usize) -> Result<(), Error> {
+        // Blobs can only be up to 2^31-1 bytes in size in SQLite, so rusqlite
+        // sensibly requires an i32. However, we're pretty much always going to
+        // think about lengths as usize outside of this function, so let's do
+        // the conversion here.
+        //
+        // A possible enhancement would be to split the mark file across
+        // multiple records if needed.
+        let blob_size = match size.try_into() {
+            Ok(size) => size,
+            Err(_) => {
+                return Err(Error::LargeMarkFile {
+                    max: i32::MAX,
+                    size,
+                });
+            }
+        };
+
         let txn = self.conn.transaction()?;
 
         txn.execute("DELETE FROM marks", [])?;
         let row_id: i64 = txn.query_row(
-            "INSERT INTO marks (raw) VALUES ('') RETURNING ROWID",
-            [],
+            "INSERT INTO marks (raw) VALUES (?) RETURNING ROWID",
+            [ZeroBlob(blob_size)],
             |row| row.get(0),
         )?;
 

@@ -26,6 +26,14 @@ pub use tag::Tag;
 /// The writer will send a `done` command when dropped to ensure data integrity,
 /// so be careful not to reuse the same underlying writer with multiple `Writer`
 /// instances.
+///
+/// Note that `git fast-import` must have been invoked with
+/// `--allow-unsafe-features`: as this object needs to know what the last mark
+/// was, it reads the mark file and then uses the `feature` command to set the
+/// import and export flags in `git fast-import`, which are considered unsafe.
+/// As this type does not provide a way of specifying arbitrary features outside
+/// of naming the mark file, this is safe provided the mark file path is _not_
+/// user controlled.
 #[derive(Debug)]
 pub struct Writer<W>
 where
@@ -39,24 +47,12 @@ impl<W> Writer<W>
 where
     W: Write + Debug,
 {
-    /// Constructs a new git-fast-import writer that wraps the given writer.
-    ///
-    /// Note that `writer` must be ready to receive commands immediately, as
-    /// `feature` commands will be sent to configure the receiver.
-    pub fn new(writer: W) -> anyhow::Result<Self> {
-        Self {
-            writer,
-            next_mark: 1,
-        }
-        .send_generic_header()
-    }
-
     /// Constructs a new git-fast-import writer that wraps the given writer with
     /// a persistent mark file.
     ///
     /// Note that `writer` must be ready to receive commands immediately, as
     /// `feature` commands will be sent to configure the receiver.
-    pub fn new_with_mark_file<P>(writer: W, mark_file: P) -> anyhow::Result<Self>
+    pub fn new<P>(writer: W, mark_file: P) -> anyhow::Result<Self>
     where
         P: AsRef<Path>,
     {
