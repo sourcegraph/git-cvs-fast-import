@@ -63,7 +63,7 @@ fn admin(input: &[u8]) -> IResult<&[u8], types::Admin> {
                         tag(b":"),
                         delimited(multispace0, num, multispace0),
                     ),
-                    HashMap::new(),
+                    HashMap::new,
                     |mut acc, (k, v)| {
                         acc.insert(k, v);
                         acc
@@ -79,7 +79,7 @@ fn admin(input: &[u8]) -> IResult<&[u8], types::Admin> {
                         tag(b":"),
                         delimited(multispace0, num, multispace0),
                     ),
-                    HashMap::new(),
+                    HashMap::new,
                     |mut acc, (k, v)| {
                         acc.insert(k, v);
                         acc

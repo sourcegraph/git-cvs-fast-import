@@ -8,4 +8,4 @@ edition = "2018"
 [dependencies]
 refinery = { version = "0.6.0", features = ["rusqlite"] }
 rusqlite = { version = "0.25.3", features = ["blob", "bundled"] }
-thiserror = "1.0.26"
+thiserror = "1.0.29"

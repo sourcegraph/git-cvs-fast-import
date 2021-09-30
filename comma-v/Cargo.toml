@@ -9,9 +9,9 @@ edition = "2018"
 chrono = "0.4.19"
 derive_more = "0.99.16"
 eq-macro = { path = "../eq-macro" }
-nom = "6.2.1"
-thiserror = "1.0.26"
+nom = "7.0.0"
+thiserror = "1.0.29"
 
 [dev-dependencies]
-anyhow = "1.0.43"
-structopt = "0.3.22"
+anyhow = "1.0.44"
+structopt = "0.3.23"

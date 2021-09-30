@@ -51,7 +51,7 @@ pub(super) fn string(input: &[u8]) -> IResult<&[u8], types::VString> {
             tag(b"@"),
             fold_many0(
                 alt((string_literal, string_escape)),
-                Vec::new(),
+                Vec::new,
                 |mut v, fragment| {
                     v.extend_from_slice(fragment);
                     v

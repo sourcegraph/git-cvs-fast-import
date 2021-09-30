@@ -6,9 +6,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.43"
-nom = "6.2.1"
-thiserror = "1.0.26"
+anyhow = "1.0.44"
+nom = "7.0.0"
+thiserror = "1.0.29"
 
 [dev-dependencies]
-structopt = "0.3.22"
+structopt = "0.3.23"
