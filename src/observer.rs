@@ -4,6 +4,7 @@ use std::{
 };
 
 use comma_v::{Delta, DeltaText, Num, Sym};
+use git_cvs_fast_import_state::{FileRevisionID, FileRevisionKey, Manager};
 use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
 use thiserror::Error;
@@ -14,8 +15,6 @@ use tokio::{
     },
     task::{self, JoinHandle},
 };
-
-use crate::state::{self, FileRevisionID, FileRevisionKey, Manager};
 
 /// An `Observer` receives a stream of file revisions and hands them to both the
 /// patchset detector and the state manager.
@@ -68,7 +67,7 @@ impl Observer {
                             path: msg.file_revision.path.clone(),
                             revision: msg.file_revision.revision,
                         },
-                        state::Commit {
+                        git_cvs_fast_import_state::Commit {
                             branches: msg.file_revision.branches.clone(),
                             author: msg.file_revision.author.clone(),
                             message: msg.file_revision.message.clone(),
@@ -180,5 +179,5 @@ pub(crate) enum Error {
     Send(#[from] SendError<Message>),
 
     #[error(transparent)]
-    State(#[from] state::Error),
+    State(#[from] git_cvs_fast_import_state::Error),
 }

@@ -5,10 +5,8 @@ use thiserror::Error;
 
 use super::{FileRevisionID, FileRevisionKey};
 
-pub(crate) type Result<T> = std::result::Result<T, Error>;
-
 #[derive(Error, Debug)]
-pub(crate) enum Error {
+pub enum Error {
     #[error("duplicate file revision {mark} for {file_revision:?}")]
     DuplicateFileRevision {
         file_revision: Arc<FileRevisionKey>,

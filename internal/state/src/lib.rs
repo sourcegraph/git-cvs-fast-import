@@ -1,3 +1,8 @@
+//! In-memory state management for `git-cvs-fast-import`.
+//!
+//! `git-cvs-fast-import-store` essentially acts as a persistence layer for this
+//! package.
+
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsString,
@@ -10,49 +15,50 @@ use git_fast_import::Mark;
 use tokio::sync::RwLock;
 
 mod error;
-pub(crate) use self::error::{Error, Result};
+pub use self::error::Error;
 
 pub type FileRevisionID = usize;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FileRevisionKey {
-    pub(crate) path: OsString,
-    pub(crate) revision: Vec<u8>,
+pub struct FileRevisionKey {
+    pub path: OsString,
+    pub revision: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Commit {
-    pub(crate) branches: Vec<Vec<u8>>,
-    pub(crate) author: String,
-    pub(crate) message: String,
-    pub(crate) time: SystemTime,
+pub struct Commit {
+    pub branches: Vec<Vec<u8>>,
+    pub author: String,
+    pub message: String,
+    pub time: SystemTime,
 }
 
 #[derive(Debug)]
-pub(crate) struct PatchSet {
-    pub(crate) branch: Vec<u8>,
-    pub(crate) time: SystemTime,
-    pub(crate) file_revisions: Vec<FileRevisionID>,
+pub struct PatchSet {
+    pub branch: Vec<u8>,
+    pub time: SystemTime,
+    pub file_revisions: Vec<FileRevisionID>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MarkedCommit {
-    pub(crate) mark: Option<Mark>,
-    pub(crate) commit: Commit,
+pub struct MarkedCommit {
+    pub mark: Option<Mark>,
+    pub commit: Commit,
 }
 
 #[derive(Debug)]
-pub(crate) struct MarkedPatchSet {
+pub struct MarkedPatchSet {
     mark: Mark,
     patchset: Arc<PatchSet>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Manager {
+pub struct Manager {
     // Base storage of every revision seen. Not exposed to the outside.
     file_revisions: Arc<RwLock<BTreeMap<Arc<FileRevisionKey>, FileRevisionID>>>,
 
     // Mapping of revisions to commits and marks.
+    #[allow(clippy::type_complexity)]
     file_revision_commits: Arc<RwLock<Vec<(Arc<FileRevisionKey>, MarkedCommit)>>>,
 
     // Mapping of file marks to revisions and commits.
@@ -70,11 +76,11 @@ pub(crate) struct Manager {
 
 // TODO: methods to interact with a database store.
 impl Manager {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) async fn persist_to_store(&self, store: &Store) -> Result<()> {
+    pub async fn persist_to_store(&self, store: &Store) -> Result<(), Error> {
         let file_revision_commits_vec = self.file_revision_commits.read().await;
 
         log::trace!("inserting file revisions");
@@ -133,12 +139,12 @@ impl Manager {
         Ok(())
     }
 
-    pub(crate) async fn add_file_revision(
+    pub async fn add_file_revision(
         &self,
         file_revision: FileRevisionKey,
         commit: Commit,
         mark: Option<Mark>,
-    ) -> Result<usize> {
+    ) -> Result<usize, Error> {
         let file_revision = Arc::new(file_revision);
 
         let id = {
@@ -160,7 +166,7 @@ impl Manager {
         Ok(id)
     }
 
-    pub(crate) async fn add_patchset<I>(
+    pub async fn add_patchset<I>(
         &self,
         mark: Mark,
         branch: Vec<u8>,
@@ -189,24 +195,24 @@ impl Manager {
             .insert(mark, Arc::new(patchset));
     }
 
-    pub(crate) async fn add_tag(&self, tag: Vec<u8>, id: FileRevisionID) {
+    pub async fn add_tag(&self, tag: Vec<u8>, id: FileRevisionID) {
         self.tags.write().await.entry(tag).or_default().push(id);
     }
 
-    pub(crate) async fn get_file_revision_from_id(
+    pub async fn get_file_revision_from_id(
         &self,
         id: FileRevisionID,
-    ) -> Result<Arc<FileRevisionKey>> {
+    ) -> Result<Arc<FileRevisionKey>, Error> {
         match self.file_revision_commits.read().await.get(id) {
-            Some((file_revision, marked_commit)) => Ok(file_revision.clone()),
+            Some((file_revision, _marked_commit)) => Ok(file_revision.clone()),
             None => Err(Error::NoFileRevisionForID(id)),
         }
     }
 
-    pub(crate) async fn get_file_revision_from_mark(
+    pub async fn get_file_revision_from_mark(
         &self,
         mark: &Mark,
-    ) -> Result<Arc<FileRevisionKey>> {
+    ) -> Result<Arc<FileRevisionKey>, Error> {
         let file_revision_commits_vec = self.file_revision_commits.read().await;
 
         match self
@@ -222,17 +228,17 @@ impl Manager {
         }
     }
 
-    pub(crate) async fn get_mark_from_file_id(&self, id: FileRevisionID) -> Result<Option<Mark>> {
+    pub async fn get_mark_from_file_id(&self, id: FileRevisionID) -> Result<Option<Mark>, Error> {
         match self.file_revision_commits.read().await.get(id) {
             Some((_file_revision, marked_commit)) => Ok(marked_commit.mark),
             None => Err(Error::NoFileRevisionForID(id)),
         }
     }
 
-    pub(crate) async fn get_mark_from_file_revision(
+    pub async fn get_mark_from_file_revision(
         &self,
         file_revision: &FileRevisionKey,
-    ) -> Result<Option<Mark>> {
+    ) -> Result<Option<Mark>, Error> {
         if let Some(id) = self.file_revisions.read().await.get(file_revision) {
             let (_revision, marked_commit) = &self.file_revision_commits.read().await[*id];
 
@@ -242,10 +248,10 @@ impl Manager {
         }
     }
 
-    pub(crate) async fn get_patchsets_for_file_revision(
+    pub async fn get_patchsets_for_file_revision(
         &self,
         file_revision: &FileRevisionKey,
-    ) -> Result<Vec<Mark>> {
+    ) -> Result<Vec<Mark>, Error> {
         if let Some(file_revision_id) = self.file_revisions.read().await.get(file_revision) {
             if let Some(patchsets) = self
                 .file_revision_patchsets
@@ -262,17 +268,17 @@ impl Manager {
         }
     }
 
-    pub(crate) async fn get_patchset_from_mark(&self, mark: &Mark) -> Result<Arc<PatchSet>> {
+    pub async fn get_patchset_from_mark(&self, mark: &Mark) -> Result<Arc<PatchSet>, Error> {
         match self.patchset_marks.read().await.get(mark) {
             Some(patchset) => Ok(patchset.clone()),
             None => Err(Error::NoPatchSetForMark(*mark)),
         }
     }
 
-    pub(crate) async fn get_tag(
+    pub async fn get_tag(
         &self,
         tag: &[u8],
-    ) -> Result<Vec<(Arc<FileRevisionKey>, MarkedCommit)>> {
+    ) -> Result<Vec<(Arc<FileRevisionKey>, MarkedCommit)>, Error> {
         if let Some(ids) = self.tags.read().await.get(tag) {
             let file_revision_commits_vec = self.file_revision_commits.read().await;
 
@@ -286,7 +292,7 @@ impl Manager {
         }
     }
 
-    pub(crate) async fn tag_iter(&self) -> impl Iterator<Item = Vec<u8>> {
+    pub async fn tag_iter(&self) -> impl Iterator<Item = Vec<u8>> {
         self.tags
             .read()
             .await

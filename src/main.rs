@@ -9,19 +9,16 @@ use std::{
 use discovery::Discovery;
 
 use git_cvs_fast_import_process::Output;
+use git_cvs_fast_import_state::{FileRevisionID, Manager};
 use git_cvs_fast_import_store::Store;
 use git_fast_import::{CommitBuilder, FileCommand, Identity, Mark};
 use observer::{Collector, Observer};
 use patchset::PatchSet;
-use state::FileRevisionID;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
 
-use crate::state::Manager;
-
 mod discovery;
 mod observer;
-mod state;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
