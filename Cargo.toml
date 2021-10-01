@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [workspace]
-members = [ "comma-v", "eq-macro", "git-fast-import", "patchset", "rcs-ed", "store" ]
+members = [ "comma-v", "eq-macro", "git-fast-import", "internal/process", "internal/store", "patchset", "rcs-ed" ]
 
 [dev-dependencies]
 tokio-test = "0.4.2"
@@ -13,7 +13,8 @@ tokio-test = "0.4.2"
 anyhow = "1.0.44"
 comma-v = { path = "comma-v" }
 flume = "0.10.9"
-git-cvs-fast-import-store = { path = "store" }
+git-cvs-fast-import-process = { path = "internal/process" }
+git-cvs-fast-import-store = { path = "internal/store" }
 git-fast-import = { path = "git-fast-import" }
 log = "0.4.14"
 num_cpus = "1.13.0"

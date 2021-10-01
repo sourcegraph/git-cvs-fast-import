@@ -3,16 +3,15 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Write},
     os::unix::prelude::{MetadataExt, OsStrExt},
-    path::Path,
     time::{Duration, SystemTime},
 };
 
 use discovery::Discovery;
 
+use git_cvs_fast_import_process::Output;
 use git_cvs_fast_import_store::Store;
 use git_fast_import::{CommitBuilder, FileCommand, Identity, Mark};
 use observer::{Collector, Observer};
-use output::Output;
 use patchset::PatchSet;
 use state::FileRevisionID;
 use structopt::StructOpt;
@@ -22,7 +21,6 @@ use crate::state::Manager;
 
 mod discovery;
 mod observer;
-mod output;
 mod state;
 
 #[derive(Debug, StructOpt)]
@@ -43,7 +41,7 @@ struct Opt {
     jobs: Option<usize>,
 
     #[structopt(flatten)]
-    output: output::Opt,
+    output: git_cvs_fast_import_process::Opt,
 
     #[structopt(
         short,
@@ -74,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     let mark_file = dump_marks_to_file(&store)?;
 
     // Set up our git-fast-import export using the marks, if any.
-    let (output, output_handle) = output::new(mark_file.as_ref(), opt.output);
+    let (output, worker) = git_cvs_fast_import_process::new(mark_file.as_ref(), opt.output);
 
     // Discover all files from stdin, and process each one into a new Collector
     // and the state.
@@ -104,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     drop(output);
 
     // Now we wait for any remaining items to be written.
-    output_handle.await??;
+    worker.wait().await?;
 
     // git-fast-import wrote the marks to the mark file before exiting while we
     // were waiting for the output handle, so we can now store that in the

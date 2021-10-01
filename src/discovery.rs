@@ -10,11 +10,12 @@ use std::{
 
 use comma_v::{Delta, DeltaText, Num, Sym};
 use flume::{Receiver, Sender};
+use git_cvs_fast_import_process::Output;
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
 
-use crate::{observer::Observer, output::Output};
+use crate::observer::Observer;
 
 /// A task that parses each file it's given.
 ///
