@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     // store.
     let state = Manager::new();
     let store = Store::new(opt.state_file.as_os_str())?;
+    // state.load_from_store(&store).await?;
 
     // Set up the mark file for git-fast-import to import.
     let mark_file = dump_marks_to_file(&store)?;
@@ -182,6 +183,8 @@ where
 {
     // All commits except for the very first one will refer to their parent via
     // the from marker, so let's set that up.
+    //
+    // TODO: pull this from the store.
     let mut from = None;
 
     for patchset in patchset_iter {

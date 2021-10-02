@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use git_fast_import::Mark;
 use thiserror::Error;
+use tokio::task::JoinError;
 
 use super::{FileRevisionID, FileRevisionKey};
 
@@ -12,6 +13,12 @@ pub enum Error {
         file_revision: Arc<FileRevisionKey>,
         mark: Mark,
     },
+
+    #[error(transparent)]
+    Join(#[from] JoinError),
+
+    #[error("error loading from store: {0}")]
+    Load(String),
 
     #[error("no file revision exists for ID {0}")]
     NoFileRevisionForID(FileRevisionID),

@@ -1,4 +1,7 @@
 //! Low level types mapping to the database tables.
+//!
+//! Note that there's no mapping for the `tags` table, mostly because it's so
+//! simple that there's no point.
 
 use std::time::SystemTime;
 
@@ -10,22 +13,10 @@ pub struct FileRevisionCommit {
     pub path: Vec<u8>,
     pub revision: Vec<u8>,
     pub mark: Option<usize>,
-    pub author: Vec<u8>,
-    pub message: Vec<u8>,
+    pub author: String,
+    pub message: String,
     pub time: SystemTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct FileRevisionCommitBranch {
-    pub file_revision_commit_id: ID,
-    pub branch: Vec<u8>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Tag {
-    pub id: ID,
-    pub tag: Vec<u8>,
-    pub file_revision_commit_id: ID,
+    pub branches: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,10 +25,5 @@ pub struct PatchSet {
     pub mark: usize,
     pub branch: Vec<u8>,
     pub time: SystemTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct FileRevisionCommitPatchSet {
-    pub file_revision_commit_id: ID,
-    pub patchset_id: ID,
+    pub file_revisions: Vec<ID>,
 }

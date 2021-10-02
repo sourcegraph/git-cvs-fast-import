@@ -11,6 +11,7 @@ use std::{
 use comma_v::{Delta, DeltaText, Num, Sym};
 use flume::{Receiver, Sender};
 use git_cvs_fast_import_process::Output;
+use git_cvs_fast_import_state::{FileRevisionKey, Manager};
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
@@ -37,14 +38,20 @@ impl Discovery {
     ///
     /// Parallelism is controlled by the `jobs` argument, which specifies the
     /// number of worker tasks to create.
-    pub fn new(output: &Output, observer: &Observer, jobs: usize, prefix: Option<&OsStr>) -> Self {
+    pub fn new(
+        state: &Manager,
+        output: &Output,
+        observer: &Observer,
+        jobs: usize,
+        prefix: Option<&OsStr>,
+    ) -> Self {
         // This is a multi-producer, multi-consumer channel that we use to fan
         // paths out to workers.
         let (tx, rx) = flume::unbounded::<OsString>();
 
         // Start each worker.
         for _i in 0..jobs {
-            let worker = Worker::new(&rx, observer, output, prefix);
+            let worker = Worker::new(&rx, observer, output, prefix, state);
             task::spawn(async move { worker.work().await });
         }
 
@@ -63,6 +70,7 @@ struct Worker {
     output: Output,
     prefix: Option<OsString>,
     rx: Receiver<OsString>,
+    state: Manager,
 }
 
 impl Worker {
@@ -72,12 +80,14 @@ impl Worker {
         observer: &Observer,
         output: &Output,
         prefix: Option<&OsStr>,
+        state: &Manager,
     ) -> Self {
         Self {
             observer: observer.clone(),
             output: output.clone(),
             prefix: prefix.map(OsString::from),
             rx: rx.clone(),
+            state: state.clone(),
         }
     }
 
@@ -189,6 +199,21 @@ impl FileRevisionHandler<'_> {
         delta: &Delta,
         delta_text: &DeltaText,
     ) -> anyhow::Result<Option<Mark>> {
+        // Check if this revision has already been seen.
+        if let Ok(mark) = self
+            .worker
+            .state
+            .get_mark_from_file_revision(&FileRevisionKey {
+                // TODO: Remove the clones here once Manager can handle
+                // references.
+                path: self.real_path.to_os_string(),
+                revision: revision.to_vec(),
+            })
+            .await
+        {
+            return Ok(mark);
+        }
+
         let mark = match &delta.state {
             Some(state) if state == b"dead".as_ref() => None,
             _ => Some(self.worker.output.blob(Blob::new(&file.as_bytes())).await?),
