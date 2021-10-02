@@ -11,7 +11,7 @@ use std::{
 use comma_v::{Delta, DeltaText, Num, Sym};
 use flume::{Receiver, Sender};
 use git_cvs_fast_import_process::Output;
-use git_cvs_fast_import_state::{FileRevisionKey, Manager};
+use git_cvs_fast_import_state::Manager;
 use git_fast_import::{Blob, Mark};
 use rcs_ed::{File, Script};
 use tokio::task;
@@ -200,18 +200,13 @@ impl FileRevisionHandler<'_> {
         delta_text: &DeltaText,
     ) -> anyhow::Result<Option<Mark>> {
         // Check if this revision has already been seen.
-        if let Ok(mark) = self
+        if let Ok(revision) = self
             .worker
             .state
-            .get_mark_from_file_revision(&FileRevisionKey {
-                // TODO: Remove the clones here once Manager can handle
-                // references.
-                path: self.real_path.to_os_string(),
-                revision: revision.to_vec(),
-            })
+            .get_file_revision(self.real_path, revision)
             .await
         {
-            return Ok(mark);
+            return Ok(revision.mark.map(|mark| mark.into()));
         }
 
         let mark = match &delta.state {

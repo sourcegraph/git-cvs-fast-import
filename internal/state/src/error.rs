@@ -1,52 +1,30 @@
-use std::sync::Arc;
-
-use git_fast_import::Mark;
 use thiserror::Error;
-use tokio::task::JoinError;
 
-use super::{FileRevisionID, FileRevisionKey};
+use crate::{file_revision, patchset};
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("duplicate file revision {mark} for {file_revision:?}")]
-    DuplicateFileRevision {
-        file_revision: Arc<FileRevisionKey>,
-        mark: Mark,
-    },
+    #[error("error returned from callback: {0:?}")]
+    Callback(String),
 
     #[error(transparent)]
-    Join(#[from] JoinError),
+    Io(#[from] std::io::Error),
 
     #[error("error loading from store: {0}")]
     Load(String),
 
     #[error("no file revision exists for ID {0}")]
-    NoFileRevisionForID(FileRevisionID),
+    NoFileRevisionForID(file_revision::ID),
 
     #[error("no file revision exists for key {0:?}")]
-    NoFileRevisionForKey(FileRevisionKey),
+    NoFileRevisionForKey(file_revision::Key),
 
     #[error("no file revision exists for mark {0}")]
-    NoFileRevisionForMark(Mark),
-
-    #[error("no mark exists for file revision {0:?}")]
-    NoMark(FileRevisionKey),
+    NoFileRevisionForMark(file_revision::Mark),
 
     #[error("no patchset exists for mark {0}")]
-    NoPatchSetForMark(Mark),
+    NoPatchSetForMark(patchset::Mark),
 
     #[error("tag {0} does not exist")]
     NoTag(String),
-
-    #[error(transparent)]
-    Store(#[from] git_cvs_fast_import_store::Error),
-}
-
-impl From<(Arc<FileRevisionKey>, Mark)> for Error {
-    fn from((file_revision, mark): (Arc<FileRevisionKey>, Mark)) -> Self {
-        Self::DuplicateFileRevision {
-            file_revision,
-            mark,
-        }
-    }
 }

@@ -1,8 +1,7 @@
 use std::{
     ffi::{OsStr, OsString},
-    fs::File,
-    io::{self, BufRead, BufReader, Write},
-    os::unix::prelude::{MetadataExt, OsStrExt},
+    io::{self, BufRead, BufReader},
+    os::unix::prelude::OsStrExt,
     time::{Duration, SystemTime},
 };
 
@@ -10,12 +9,12 @@ use discovery::Discovery;
 
 use git_cvs_fast_import_process::Output;
 use git_cvs_fast_import_state::{FileRevisionID, Manager};
-use git_cvs_fast_import_store::Store;
 use git_fast_import::{CommitBuilder, FileCommand, Identity, Mark};
 use observer::{Collector, Observer};
 use patchset::PatchSet;
 use structopt::StructOpt;
 use tempfile::NamedTempFile;
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
 mod discovery;
 mod observer;
@@ -48,8 +47,13 @@ struct Opt {
     )]
     prefix: Option<OsString>,
 
-    #[structopt(short, long, parse(from_os_str), help = "state file")]
-    state_file: OsString,
+    #[structopt(
+        short,
+        long,
+        parse(from_os_str),
+        help = "the file to use as the persistent store, which enables incremental updates"
+    )]
+    store: OsString,
 }
 
 #[tokio::main]
@@ -63,11 +67,10 @@ async fn main() -> anyhow::Result<()> {
     // Set up our state, and ensure we have a connection to our persistent
     // store.
     let state = Manager::new();
-    let store = Store::new(opt.state_file.as_os_str())?;
-    // state.load_from_store(&store).await?;
+    // let store = Store::new(opt.state_file.as_os_str())?;
 
     // Set up the mark file for git-fast-import to import.
-    let mark_file = dump_marks_to_file(&store)?;
+    let mark_file = dump_marks_to_file(&state).await?;
 
     // Set up our git-fast-import export using the marks, if any.
     let (output, worker) = git_cvs_fast_import_process::new(mark_file.as_ref(), opt.output);
@@ -106,12 +109,12 @@ async fn main() -> anyhow::Result<()> {
     // were waiting for the output handle, so we can now store that in the
     // persistent store as well and remove the temporary file.
     log::debug!("saving marks to store");
-    save_marks_from_file(&store, &mark_file)?;
+    save_marks_from_file(&state, &mark_file).await?;
     mark_file.close()?;
 
     // Finally, we can now store the in-memory state to the persistent store.
     log::debug!("persisting state to store");
-    state.persist_to_store(&store).await?;
+    // state.persist_to_store(&store).await?;
 
     log::debug!("export complete; exiting");
     Ok(())
@@ -138,7 +141,7 @@ where
     let (observer, collector) = Observer::new(delta, state.clone());
 
     // Create our discovery worker pool.
-    let discovery = Discovery::new(output, &observer, parallel_jobs, prefix);
+    let discovery = Discovery::new(state, output, &observer, parallel_jobs, prefix);
 
     // Send all the input paths to the discovery workers.
     for r in paths {
@@ -161,13 +164,12 @@ where
 ///
 /// If marks do not exist, then a new temporary file will be created and
 /// returned.
-fn dump_marks_to_file(store: &Store) -> anyhow::Result<NamedTempFile> {
-    let mut file = NamedTempFile::new()?;
+async fn dump_marks_to_file(state: &Manager) -> anyhow::Result<NamedTempFile> {
+    let file = NamedTempFile::new()?;
 
-    if let Some(mut mark_reader) = store.connection()?.get_raw_marks()? {
-        io::copy(&mut mark_reader, &mut file)?;
-        file.flush()?;
-    }
+    let mut writer = OpenOptions::new().write(true).open(file.path()).await?;
+    state.get_raw_marks(&mut writer).await?;
+    writer.flush().await?;
 
     Ok(file)
 }
@@ -206,10 +208,11 @@ where
         // (in which case it's a modification, since there's content associated
         // with the file revision) or not (in which case it's a deletion).
         for (path, file_id) in patchset.file_content_iter() {
-            match state.get_mark_from_file_id(*file_id).await? {
+            let revision = state.get_file_revision_by_id(*file_id).await?;
+            match revision.mark {
                 Some(mark) => builder.add_file_command(FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
-                    mark,
+                    mark: mark.into(),
                     path: path.to_string_lossy().into(),
                 }),
                 None => builder.add_file_command(FileCommand::Delete {
@@ -227,8 +230,8 @@ where
         state
             .add_patchset(
                 mark,
-                b"main".to_vec(),
-                patchset.time,
+                b"main",
+                &patchset.time,
                 patchset
                     .file_revision_iter()
                     .map(|(_path, ids)| ids)
@@ -248,7 +251,7 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
     // TODO: allow the identity to be configured.
     let identity = Identity::new(None, "git-cvs-fast-import".into(), SystemTime::now())?;
 
-    for tag in state.tag_iter().await {
+    for tag in state.get_tags().await.iter() {
         // For each tag, we need to fake a Git commit with the correct content,
         // since CVS tags don't map onto Git tags especially gracefully, then
         // send a relevant tag.
@@ -261,7 +264,7 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
         // revision in the tag belongs to will be the parent.
 
         let mut parent_patchset: Option<(Mark, SystemTime)> = None;
-        let tag_str = String::from_utf8_lossy(&tag).into_owned();
+        let tag_str = String::from_utf8_lossy(tag).into_owned();
 
         let mut builder = CommitBuilder::new(format!("refs/heads/tags/{}", &tag_str));
         // TODO: allow the identity to be configured.
@@ -273,29 +276,33 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
         // then attach the new content that is known to be on the tag. This
         // means that Git will have to figure out what the diffs look like.
         builder.add_file_command(FileCommand::DeleteAll);
-        for (key, marked_commit) in state.get_tag(&tag).await? {
-            let path = key.path.to_string_lossy().into_owned();
+        if let Some(file_revision_ids) = state.get_file_revisions_for_tag(tag).await.iter() {
+            for file_revision_id in file_revision_ids.iter() {
+                let file_revision = state.get_file_revision_by_id(*file_revision_id).await?;
+                let path = file_revision.key.path.to_string_lossy().into_owned();
 
-            match marked_commit.mark {
-                Some(mark) => builder.add_file_command(FileCommand::Modify {
-                    mode: git_fast_import::Mode::Normal,
-                    mark,
-                    path,
-                }),
-                None => builder.add_file_command(FileCommand::Delete { path }),
-            };
+                match file_revision.mark {
+                    Some(mark) => builder.add_file_command(FileCommand::Modify {
+                        mode: git_fast_import::Mode::Normal,
+                        mark: mark.into(),
+                        path,
+                    }),
+                    None => builder.add_file_command(FileCommand::Delete { path }),
+                };
 
-            // Find out which patchset this file revision is in, if any, and
-            // check if it's newer than what we've seen.
-            if let Some(patchset_mark) = state.get_patchsets_for_file_revision(&key).await?.last() {
-                let patchset = state.get_patchset_from_mark(patchset_mark).await?;
-
-                if let Some((mark, time)) = &parent_patchset {
-                    if time < &patchset.time {
-                        parent_patchset = Some((*mark, patchset.time));
+                // Find out which patchset this file revision is in, if any, and
+                // check if it's newer than what we've seen.
+                if let Some((patchset_mark, patchset)) = state
+                    .get_last_patchset_for_file_revision(*file_revision_id)
+                    .await
+                {
+                    if let Some((mark, time)) = &parent_patchset {
+                        if time < &patchset.time {
+                            parent_patchset = Some((*mark, patchset.time));
+                        }
+                    } else {
+                        parent_patchset = Some((patchset_mark, patchset.time));
                     }
-                } else {
-                    parent_patchset = Some((*patchset_mark, patchset.time));
                 }
             }
         }
@@ -323,13 +330,10 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
 }
 
 /// Save the created marks back into the database.
-fn save_marks_from_file(store: &Store, mark_file: &NamedTempFile) -> anyhow::Result<()> {
+async fn save_marks_from_file(state: &Manager, mark_file: &NamedTempFile) -> anyhow::Result<()> {
     // git fast-import will replace the temporary file under the same name,
     // rather than just writing to it, so mark_file.reopen() fails as a result.
     // Instead, we'll just use the path to open the file anew.
-    let file = File::open(mark_file)?;
-
-    Ok(store
-        .connection()?
-        .set_raw_marks(&file, file.metadata()?.size() as usize)?)
+    let mut file = OpenOptions::new().read(true).open(mark_file.path()).await?;
+    Ok(state.set_raw_marks(&mut file).await?)
 }

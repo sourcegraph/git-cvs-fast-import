@@ -4,7 +4,7 @@ use std::{
 };
 
 use comma_v::{Delta, DeltaText, Num, Sym};
-use git_cvs_fast_import_state::{FileRevisionID, FileRevisionKey, Manager};
+use git_cvs_fast_import_state::{FileRevisionID, Manager};
 use git_fast_import::Mark;
 use patchset::{Detector, PatchSet};
 use thiserror::Error;
@@ -63,17 +63,13 @@ impl Observer {
             while let Some(msg) = file_revision_rx.recv().await {
                 let id = task_state
                     .add_file_revision(
-                        FileRevisionKey {
-                            path: msg.file_revision.path.clone(),
-                            revision: msg.file_revision.revision,
-                        },
-                        git_cvs_fast_import_state::Commit {
-                            branches: msg.file_revision.branches.clone(),
-                            author: msg.file_revision.author.clone(),
-                            message: msg.file_revision.message.clone(),
-                            time: msg.file_revision.time,
-                        },
+                        msg.file_revision.path.as_os_str(),
+                        &msg.file_revision.revision,
                         msg.file_revision.mark,
+                        msg.file_revision.branches.iter(),
+                        &msg.file_revision.author,
+                        &msg.file_revision.message,
+                        &msg.file_revision.time,
                     )
                     .await?;
 
@@ -91,7 +87,7 @@ impl Observer {
                     .expect("cannot return file ID back to caller")
             }
 
-            Ok::<Detector<usize>, Error>(detector)
+            Ok::<Detector<FileRevisionID>, Error>(detector)
         });
 
         (
@@ -110,7 +106,7 @@ impl Observer {
         path: &OsStr,
         revision: &Num,
         branches: &[Num],
-        id: Option<Mark>,
+        mark: Option<Mark>,
         delta: &Delta,
         text: &DeltaText,
     ) -> Result<FileRevisionID, Error> {
@@ -120,7 +116,7 @@ impl Observer {
             file_revision: FileRevision {
                 path: path.to_os_string(),
                 revision: revision.to_vec(),
-                mark: id,
+                mark,
                 branches: branches.iter().map(|branch| branch.to_vec()).collect(),
                 author: String::from_utf8_lossy(&delta.author).into_owned(),
                 message: String::from_utf8_lossy(&text.log).into_owned(),
@@ -133,8 +129,8 @@ impl Observer {
     }
 
     /// Observe a single file revision tag.
-    pub(crate) async fn tag(&self, tag: &Sym, file_id: FileRevisionID) {
-        self.state.add_tag(tag.to_vec(), file_id).await;
+    pub(crate) async fn tag(&self, tag: &Sym, file_revision_id: FileRevisionID) {
+        self.state.add_tag(tag, file_revision_id).await;
     }
 }
 
@@ -142,7 +138,7 @@ impl Observer {
 /// then can be used to access the observation result.
 #[derive(Debug)]
 pub(crate) struct Collector {
-    join_handle: JoinHandle<Result<Detector<usize>, Error>>,
+    join_handle: JoinHandle<Result<Detector<FileRevisionID>, Error>>,
 }
 
 /// An object that can be joined to wait for the results of the [`Observer`].
@@ -157,11 +153,11 @@ impl Collector {
 
 /// The result of observing file revisions and tags with [`Observer`].
 pub(crate) struct ObservationResult {
-    patchsets: Vec<PatchSet<usize>>,
+    patchsets: Vec<PatchSet<FileRevisionID>>,
 }
 
 impl ObservationResult {
-    pub(crate) fn patchset_iter(&self) -> impl Iterator<Item = &PatchSet<usize>> {
+    pub(crate) fn patchset_iter(&self) -> impl Iterator<Item = &PatchSet<FileRevisionID>> {
         self.patchsets.iter()
     }
 }
