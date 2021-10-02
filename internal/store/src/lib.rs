@@ -8,17 +8,15 @@ mod embedded {
 }
 
 mod connection;
-mod sql;
 pub use connection::Connection;
 
 mod error;
 pub use error::Error;
 
-mod inserters;
-pub use inserters::{
-    file_revision::FileRevision as FileRevisionInserter, patchset::PatchSet as PatchSetInserter,
-    tag::Tag as TagInserter,
-};
+mod sql;
+
+mod types;
+pub use types::*;
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -43,18 +41,6 @@ impl Store {
 
     pub fn connection(&self) -> Result<Connection, Error> {
         Ok(Connection::new(self.open_connection()?))
-    }
-
-    pub fn file_revision_inserter(&self) -> Result<FileRevisionInserter, Error> {
-        Ok(FileRevisionInserter::new(self.open_connection()?))
-    }
-
-    pub fn patchset_inserter(&self) -> Result<PatchSetInserter, Error> {
-        Ok(PatchSetInserter::new(self.open_connection()?))
-    }
-
-    pub fn tag_inserter(&self) -> Result<TagInserter, Error> {
-        Ok(TagInserter::new(self.open_connection()?))
     }
 
     fn open_connection(&self) -> rusqlite::Result<rusqlite::Connection> {

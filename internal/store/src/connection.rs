@@ -1,11 +1,12 @@
 use std::{
     convert::TryInto,
     io::{self, Read},
+    time::SystemTime,
 };
 
-use rusqlite::{blob::ZeroBlob, DatabaseName, OptionalExtension};
+use rusqlite::{blob::ZeroBlob, params, DatabaseName, OptionalExtension};
 
-use crate::error::Error;
+use crate::{error::Error, sql, ID};
 
 #[derive(Debug)]
 pub struct Connection {
@@ -32,6 +33,102 @@ impl Connection {
                 None
             },
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_file_revision_commit<I>(
+        &mut self,
+        path: &[u8],
+        revision: &[u8],
+        mark: Option<usize>,
+        author: &[u8],
+        message: &[u8],
+        time: &SystemTime,
+        branches: I,
+    ) -> Result<ID, Error>
+    where
+        I: Iterator,
+        I::Item: AsRef<[u8]>,
+    {
+        let id = self
+            .conn
+            .prepare_cached(
+                "
+                INSERT INTO
+                    file_revision_commits
+                (path, revision, mark, author, message, time)
+                VALUES
+                (?, ?, ?, ?, ?, ?)
+                ",
+            )?
+            .insert(params![
+                path,
+                revision,
+                mark,
+                author,
+                message,
+                sql::time(time),
+            ])?;
+
+        let mut stmt = self.conn.prepare_cached(
+            "
+            INSERT INTO
+                file_revision_commit_branches
+            (file_revision_commit_id, branch)
+            VALUES
+            (?, ?)
+            ",
+        )?;
+        for branch in branches {
+            stmt.execute(params![id, branch.as_ref()])?;
+        }
+
+        Ok(id)
+    }
+
+    pub fn insert_patchset<I>(
+        &mut self,
+        mark: usize,
+        branch: &[u8],
+        time: &SystemTime,
+        file_revision_commits: I,
+    ) -> Result<ID, Error>
+    where
+        I: Iterator<Item = ID>,
+    {
+        let patchset_id = self
+            .conn
+            .prepare_cached("INSERT INTO patchsets (mark, branch, time) VALUES (?, ?, ?)")?
+            .insert(params![mark, branch, sql::time(time)])?;
+
+        let mut stmt = self.conn.prepare(
+            "
+            INSERT INTO
+                file_revision_commit_patchsets
+            (file_revision_commit_id, patchset_id)
+            VALUES
+            (?, ?)
+            ",
+        )?;
+        for id in file_revision_commits {
+            stmt.execute(params![id, patchset_id])?;
+        }
+
+        Ok(patchset_id)
+    }
+
+    pub fn insert_tag<I>(&mut self, tag: &[u8], file_revision_commits: I) -> Result<(), Error>
+    where
+        I: Iterator<Item = ID>,
+    {
+        let mut stmt = self
+            .conn
+            .prepare_cached("INSERT INTO tags (tag, file_revision_commit_id) VALUES (?, ?)")?;
+        for id in file_revision_commits {
+            stmt.execute(params![tag, id])?;
+        }
+
+        Ok(())
     }
 
     pub fn set_raw_marks<R: Read>(&mut self, mut reader: R, size: usize) -> Result<(), Error> {

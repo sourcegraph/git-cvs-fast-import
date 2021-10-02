@@ -6,6 +6,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsString,
+    os::unix::prelude::OsStrExt,
     sync::Arc,
     time::SystemTime,
 };
@@ -54,86 +55,100 @@ pub struct MarkedPatchSet {
 
 #[derive(Debug, Clone, Default)]
 pub struct Manager {
-    // Base storage of every revision seen. Not exposed to the outside.
+    /// Base storage of every revision seen. Not exposed to the outside.
+    ///
+    /// Derived from the `file_revision_commits` store table.
     file_revisions: Arc<RwLock<BTreeMap<Arc<FileRevisionKey>, FileRevisionID>>>,
 
-    // Mapping of revisions to commits and marks.
+    /// Mapping of revisions to commits and marks.
+    ///
+    /// Maps to the `file_revision_commits` store table.
     #[allow(clippy::type_complexity)]
     file_revision_commits: Arc<RwLock<Vec<(Arc<FileRevisionKey>, MarkedCommit)>>>,
 
-    // Mapping of file marks to revisions and commits.
+    /// Mapping of file marks to revisions and commits.
+    ///
+    /// Derived from the `file_revision_commits` store table.
     file_marks: Arc<RwLock<HashMap<Mark, FileRevisionID>>>,
 
-    // Mapping of tags to revisions and commits.
+    /// Mapping of tags to revisions and commits.
+    ///
+    /// Maps to the `tags` store table.
     tags: Arc<RwLock<HashMap<Vec<u8>, Vec<FileRevisionID>>>>,
 
-    // Mapping of patchset marks to patchsets.
+    /// Mapping of patchset marks to patchsets.
+    ///
+    /// Maps to the `patchsets` store table.
     patchset_marks: Arc<RwLock<BTreeMap<Mark, Arc<PatchSet>>>>,
 
-    // Mapping of file revisions to patchsets.
+    /// Mapping of file revisions to patchsets.
+    ///
+    /// Maps to the `file_revision_commit_patchsets` table.
     file_revision_patchsets: Arc<RwLock<BTreeMap<FileRevisionID, Vec<Mark>>>>,
 }
 
-// TODO: methods to interact with a database store.
 impl Manager {
     pub fn new() -> Self {
         Self::default()
     }
 
+    pub async fn load_from_store(&self, store: &Store) -> Result<(), Error> {
+        todo!()
+    }
+
     pub async fn persist_to_store(&self, store: &Store) -> Result<(), Error> {
+        let mut conn = store.connection()?;
         let file_revision_commits_vec = self.file_revision_commits.read().await;
 
+        // We need to keep track of the FileRevisionIDs that we have in the
+        // state manager and which store ID they map to.
+        let mut file_revision_ids = BTreeMap::new();
+
         log::trace!("inserting file revisions");
-        let mut inserter = store.file_revision_inserter()?;
-        for (file_revision, marked_commit) in file_revision_commits_vec.iter() {
-            inserter.insert(
-                &file_revision.path,
-                &file_revision.revision,
-                &marked_commit.commit.time,
-                marked_commit.mark.map(|mark| mark.as_usize()),
-                &marked_commit.commit.branches,
-            )?;
+        for (state_id, (file_revision, marked_commit)) in
+            file_revision_commits_vec.iter().enumerate()
+        {
+            file_revision_ids.insert(
+                state_id,
+                conn.insert_file_revision_commit(
+                    file_revision.path.as_bytes(),
+                    &file_revision.revision,
+                    marked_commit.mark.map(|mark| mark.as_usize()),
+                    marked_commit.commit.author.as_bytes(),
+                    marked_commit.commit.message.as_bytes(),
+                    &marked_commit.commit.time,
+                    marked_commit
+                        .commit
+                        .branches
+                        .iter()
+                        .map(|branch| branch.as_slice()),
+                )?,
+            );
         }
-        inserter.finalise();
         log::trace!("done inserting file revisions");
 
         log::trace!("inserting tags");
-        let mut inserter = store.tag_inserter()?;
         for (tag, ids) in self.tags.read().await.iter() {
-            for id in ids {
-                match file_revision_commits_vec.get(*id) {
-                    Some((file_revision, _marked_commit)) => {
-                        inserter.insert(tag, &file_revision.path, &file_revision.revision)?
-                    }
-                    None => {
-                        return Err(Error::NoFileRevisionForID(*id));
-                    }
-                }
-            }
+            conn.insert_tag(
+                tag,
+                ids.iter()
+                    .filter_map(|state_id| file_revision_ids.get(state_id).copied()),
+            )?;
         }
-        inserter.finalise();
         log::trace!("done inserting tags");
 
         log::trace!("inserting patchsets");
-        let mut inserter = store.patchset_inserter()?;
         for (mark, patchset) in self.patchset_marks.read().await.iter() {
-            inserter.insert(
+            conn.insert_patchset(
                 mark.as_usize(),
                 &patchset.branch,
                 &patchset.time,
-                patchset.file_revisions.iter().filter_map(|id| {
-                    file_revision_commits_vec
-                        .get(*id)
-                        .map(|(file_revision, _marked_commit)| {
-                            (
-                                file_revision.path.as_os_str(),
-                                file_revision.revision.as_slice(),
-                            )
-                        })
-                }),
+                patchset
+                    .file_revisions
+                    .iter()
+                    .filter_map(|state_id| file_revision_ids.get(state_id).copied()),
             )?;
         }
-        inserter.finalise();
         log::trace!("done inserting patchsets");
 
         Ok(())
