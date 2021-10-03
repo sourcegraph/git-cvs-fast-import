@@ -1,6 +1,7 @@
 use std::{
     ffi::{OsStr, OsString},
-    io::{self, BufRead, BufReader},
+    fs::File,
+    io::{self, BufRead, BufReader, ErrorKind},
     os::unix::prelude::OsStrExt,
     time::{Duration, SystemTime},
 };
@@ -64,10 +65,18 @@ async fn main() -> anyhow::Result<()> {
     // Set up logging.
     pretty_env_logger::init_timed();
 
-    // Set up our state, and ensure we have a connection to our persistent
-    // store.
-    let state = Manager::new();
-    // let store = Store::new(opt.state_file.as_os_str())?;
+    // Set up our state manager, loading the store if it exists.
+    let state = match File::open(&opt.store) {
+        Ok(file) => {
+            log::debug!("loading state from {}", opt.store.to_string_lossy());
+            Manager::deserialize_from(&file).await?
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            log::debug!("setting up new state");
+            Manager::new()
+        }
+        Err(e) => anyhow::bail!(e),
+    };
 
     // Set up the mark file for git-fast-import to import.
     let mark_file = dump_marks_to_file(&state).await?;
@@ -92,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
     let result = collector.join().await?;
     log::debug!("file parsing complete; sending patchsets");
 
-    send_patchsets(&state, &output, result.patchset_iter()).await?;
+    send_patchsets(&state, &output, b"main", result.patchset_iter()).await?;
     log::debug!("main patchsets sent; sending tags");
 
     send_tags(&state, &output).await?;
@@ -113,8 +122,11 @@ async fn main() -> anyhow::Result<()> {
     mark_file.close()?;
 
     // Finally, we can now store the in-memory state to the persistent store.
-    log::debug!("persisting state to store");
-    // state.persist_to_store(&store).await?;
+    log::debug!("persisting state to {}", opt.store.to_string_lossy());
+    {
+        let file = File::create(&opt.store)?;
+        state.serialize_into(&file).await?;
+    }
 
     log::debug!("export complete; exiting");
     Ok(())
@@ -178,6 +190,7 @@ async fn dump_marks_to_file(state: &Manager) -> anyhow::Result<NamedTempFile> {
 async fn send_patchsets<'a, I>(
     state: &Manager,
     output: &Output,
+    branch: &[u8],
     patchset_iter: I,
 ) -> anyhow::Result<()>
 where
@@ -185,9 +198,10 @@ where
 {
     // All commits except for the very first one will refer to their parent via
     // the from marker, so let's set that up.
-    //
-    // TODO: pull this from the store.
-    let mut from = None;
+    let mut from: Option<Mark> = state
+        .get_last_patchset_mark_on_branch(branch)
+        .await
+        .map(|mark| mark.into());
 
     for patchset in patchset_iter {
         // We have a patchset, so let's turn it into a Git commit.
@@ -230,7 +244,7 @@ where
         state
             .add_patchset(
                 mark,
-                b"main",
+                branch,
                 &patchset.time,
                 patchset
                     .file_revision_iter()
@@ -316,14 +330,7 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
         let mark = output.commit(builder.build()?).await?;
 
         // And we can tag the commit.
-        output
-            .tag(git_fast_import::Tag::new(
-                tag_str.clone(),
-                mark,
-                identity.clone(),
-                format!("Replicating CVS tag {}.", tag_str),
-            ))
-            .await?;
+        output.lightweight_tag(&tag_str, mark).await?;
     }
 
     Ok(())

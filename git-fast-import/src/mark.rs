@@ -1,12 +1,27 @@
 use std::fmt::Display;
 
 use derive_more::{From, FromStr, Into};
+use serde::{Deserialize, Serialize};
 
 /// A mark representing a Git object.
 ///
 /// Marks are primarily created from blobs and commits, and can be used to refer
 /// back to previous objects.
-#[derive(Debug, Clone, Copy, From, FromStr, Hash, Into, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    From,
+    FromStr,
+    Hash,
+    Into,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
 pub struct Mark(pub(super) usize);
 
 impl Mark {

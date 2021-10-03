@@ -101,6 +101,13 @@ impl Output {
         Ok(rx.await?)
     }
 
+    pub async fn lightweight_tag(&self, name: &str, commit_mark: Mark) -> Result<(), Error> {
+        Ok(self.tx.send(Command::Reset {
+            branch_ref: format!("refs/tags/{}", name),
+            from: Some(commit_mark),
+        })?)
+    }
+
     pub async fn tag(&self, tag: git_fast_import::Tag) -> Result<Mark, Error> {
         let (tx, rx) = oneshot::channel();
         self.tx.send(Command::Tag(tag, tx)).map_err(|e| {

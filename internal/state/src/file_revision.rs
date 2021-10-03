@@ -8,13 +8,18 @@ use std::{
 };
 
 use derive_more::{Display, From, Into};
+use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into)]
+#[derive(
+    Debug, Display, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into,
+)]
 pub struct ID(usize);
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into)]
+#[derive(
+    Debug, Display, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into,
+)]
 pub struct Mark(git_fast_import::Mark);
 
 // The key stuff is adapted from
@@ -27,7 +32,7 @@ trait Keyer {
     fn to_key(&self) -> (&OsStr, &[u8]);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct Key {
     pub path: OsString,
     pub revision: Vec<u8>,
@@ -71,7 +76,7 @@ impl Hash for dyn Keyer + '_ {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FileRevision {
     pub key: Key,
     pub mark: Option<Mark>,
@@ -81,7 +86,7 @@ pub struct FileRevision {
     pub time: SystemTime,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Store {
     /// Base storage for file revisions.
     file_revisions: Vec<Arc<FileRevision>>,

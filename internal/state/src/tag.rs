@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use crate::file_revision;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Store {
     tags: HashMap<Vec<u8>, Vec<file_revision::ID>>,
 }

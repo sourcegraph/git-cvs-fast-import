@@ -27,4 +27,10 @@ pub enum Error {
 
     #[error("tag {0} does not exist")]
     NoTag(String),
+
+    #[error("serialisation error: {0:?}")]
+    Serialisation(#[from] bincode::Error),
+
+    #[error("unknown serialised data version: {0}")]
+    UnknownSerialisationVersion(u8),
 }

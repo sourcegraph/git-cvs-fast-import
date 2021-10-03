@@ -3,12 +3,19 @@
 //! `git-cvs-fast-import-store` essentially acts as a persistence layer for this
 //! package.
 
-use std::{ffi::OsStr, sync::Arc, time::SystemTime};
+use std::{
+    ffi::OsStr,
+    io::{Read, Write},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use git_fast_import::Mark;
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{RwLock, RwLockReadGuard},
+    task,
 };
 
 mod error;
@@ -27,13 +34,81 @@ pub struct Manager {
     file_revisions: Arc<RwLock<file_revision::Store>>,
     patchsets: Arc<RwLock<patchset::Store>>,
     tags: Arc<RwLock<tag::Store>>,
-
     raw_marks: Arc<RwLock<Vec<u8>>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Ser {
+    version: u8,
+    file_revisions: Vec<u8>,
+    patchsets: Vec<u8>,
+    tags: Vec<u8>,
+    raw_marks: Vec<u8>,
 }
 
 impl Manager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub async fn deserialize_from<R>(reader: R) -> Result<Self, Error>
+    where
+        R: Read,
+    {
+        let ser: Ser = bincode::deserialize_from(reader)?;
+
+        if ser.version != 1 {
+            return Err(Error::UnknownSerialisationVersion(ser.version));
+        }
+
+        let file_revisions = ser.file_revisions;
+        let patchsets = ser.patchsets;
+        let tags = ser.tags;
+        let raw_marks = ser.raw_marks;
+
+        let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
+            task::spawn(async move { bincode::deserialize(&file_revisions) }),
+            task::spawn(async move { bincode::deserialize(&patchsets) }),
+            task::spawn(async move { bincode::deserialize(&tags) }),
+            task::spawn(async move { bincode::deserialize(&raw_marks) }),
+        )
+        .unwrap();
+
+        Ok(Self {
+            file_revisions: Arc::new(RwLock::new(file_revisions?)),
+            patchsets: Arc::new(RwLock::new(patchsets?)),
+            tags: Arc::new(RwLock::new(tags?)),
+            raw_marks: Arc::new(RwLock::new(raw_marks?)),
+        })
+    }
+
+    pub async fn serialize_into<W>(self, writer: W) -> Result<(), Error>
+    where
+        W: Write,
+    {
+        let file_revisions = self.file_revisions.clone();
+        let patchsets = self.patchsets.clone();
+        let tags = self.tags.clone();
+        let raw_marks = self.raw_marks.clone();
+
+        let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
+            task::spawn(async move { bincode::serialize(&*file_revisions.read().await) }),
+            task::spawn(async move { bincode::serialize(&*patchsets.read().await) }),
+            task::spawn(async move { bincode::serialize(&*tags.read().await) }),
+            task::spawn(async move { bincode::serialize(&*raw_marks.read().await) }),
+        )
+        .unwrap();
+
+        let ser = Ser {
+            version: 1,
+            file_revisions: file_revisions?,
+            patchsets: patchsets?,
+            tags: tags?,
+            raw_marks: raw_marks?,
+        };
+
+        bincode::serialize_into(writer, &ser)?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -105,6 +180,10 @@ impl Manager {
             Some(revision) => Ok(revision),
             None => Err(Error::NoFileRevisionForID(id)),
         }
+    }
+
+    pub async fn get_last_patchset_mark_on_branch(&self, branch: &[u8]) -> Option<patchset::Mark> {
+        self.patchsets.read().await.get_last_mark_on_branch(branch)
     }
 
     pub async fn get_patchset_from_mark(&self, mark: &Mark) -> Result<Arc<PatchSet>, Error> {
