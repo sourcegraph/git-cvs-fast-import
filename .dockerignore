@@ -4,9 +4,14 @@
 **/examples
 examples
 
+**/dist
+dist
+
 Dockerfile
 .dockerignore
 .gitignore
 .git
+.goreleaser
+.goreleaser.yml
 LICENSE
 renovate.json
