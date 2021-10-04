@@ -22,7 +22,7 @@ mod observer;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
-    about = "An exporter for CVS repositories into the git fast-import format. Provide a list of files to parse on STDIN, and a git fast-import stream will be output on STDOUT."
+    about = "An exporter that converts CVS repositories into Git repositories. Provide a list of files to parse on STDIN, and a Git repository will be created."
 )]
 struct Opt {
     #[structopt(

@@ -22,10 +22,10 @@ mod process;
 
 pub use self::error::Error;
 
-/// Command line options that are required by the [`Output`] object.
-///
-/// These should be injected into the global `StructOpt` implementation using
-/// the `flatten` attribute.
+// Command line options that are required by the [`Output`] object.
+//
+// These should be injected into the global `StructOpt` implementation using the
+// `flatten` attribute.
 #[derive(Debug, StructOpt)]
 pub struct Opt {
     #[structopt(
