@@ -1,3 +1,0 @@
-- Implement a library to generate git-fast-import format output.
-- Implement the logic described in main.rs.
-- TEST TEST TEST
