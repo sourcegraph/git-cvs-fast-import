@@ -1,6 +1,7 @@
 **/target
 **/.vscode
 Cargo.lock
+/dist
 
 
 # Added by cargo
