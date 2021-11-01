@@ -22,7 +22,7 @@ num_cpus = "1.13.0"
 parse_duration = "2.1.1"
 patchset = { path = "patchset" }
 rcs-ed = { path = "rcs-ed" }
-structopt = "0.3.23"
+structopt = "0.3.25"
 tempfile = "3.2.0"
 thiserror = "1.0.29"
 tokio = { version = "1.12.0", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time", "fs"] }
