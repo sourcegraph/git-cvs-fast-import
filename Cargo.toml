@@ -12,7 +12,7 @@ tokio-test = "0.4.2"
 [dependencies]
 anyhow = "1.0.44"
 comma-v = { path = "comma-v" }
-flexi_logger = { version = "0.19.4", features = ["async", "colors"] }
+flexi_logger = { version = "0.19.6", features = ["async", "colors"] }
 flume = "0.10.9"
 git-cvs-fast-import-process = { path = "internal/process" }
 git-cvs-fast-import-state = { path = "internal/state" }
