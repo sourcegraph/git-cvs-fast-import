@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.45"
-nom = "7.0.0"
+nom = "7.1.0"
 thiserror = "1.0.30"
 
 [dev-dependencies]

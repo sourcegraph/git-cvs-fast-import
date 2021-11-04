@@ -9,7 +9,7 @@ edition = "2018"
 chrono = "0.4.19"
 derive_more = "0.99.16"
 eq-macro = { path = "../eq-macro" }
-nom = "7.0.0"
+nom = "7.1.0"
 thiserror = "1.0.30"
 
 [dev-dependencies]
