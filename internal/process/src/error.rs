@@ -65,6 +65,8 @@ impl Error {
 
 impl<T: Debug> From<mpsc::error::SendError<T>> for Error {
     fn from(err: mpsc::error::SendError<T>) -> Self {
-        Self::Send(format!("{:?}", err))
+        // The underlying SendError renders the entire message by default, which
+        // is unnecessary.
+        Self::Send(err.to_string())
     }
 }

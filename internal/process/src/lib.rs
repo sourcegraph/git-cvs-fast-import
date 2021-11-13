@@ -26,7 +26,7 @@ pub use self::error::Error;
 //
 // These should be injected into the global `StructOpt` implementation using the
 // `flatten` attribute.
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub struct Opt {
     #[structopt(
         long = "--git",
@@ -67,12 +67,13 @@ pub struct Output {
 /// [`Output`] object (or, more specifically, the worker within it): we can't be
 /// sure that the import proper and mark export are complete until the process
 /// actually exits.
-pub fn new<P>(mark_file_path: P, opt: Opt) -> (Output, Worker)
+pub fn new<P>(mark_file_path: P, opt: &Opt) -> (Output, Worker)
 where
     P: AsRef<Path>,
 {
     let (tx, rx) = mpsc::unbounded_channel();
     let mark_file = mark_file_path.as_ref().to_path_buf();
+    let opt = opt.clone();
 
     (
         Output { tx },
