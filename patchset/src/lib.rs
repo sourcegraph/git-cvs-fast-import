@@ -2,10 +2,10 @@
 
 use std::{
     collections::HashMap,
-    ffi::{OsStr, OsString},
     fmt::Debug,
     hash::Hash,
     mem,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
@@ -80,7 +80,7 @@ where
     /// If `id` is `None`, then this commit represents the file being deleted.
     pub fn add_file_commit<BI>(
         &mut self,
-        path: OsString,
+        path: PathBuf,
         id: ID,
         branches: BI,
         author: String,
@@ -172,7 +172,7 @@ where
     pub time: SystemTime,
     pub author: String,
     pub message: String,
-    files: HashMap<OsString, Vec<ID>>,
+    files: HashMap<PathBuf, Vec<ID>>,
 }
 
 impl<ID> PatchSet<ID>
@@ -180,7 +180,7 @@ where
     ID: Debug + Clone + Eq,
 {
     /// Returns the content ID for the given file.
-    pub fn file_content(&self, file: &OsStr) -> Result<&ID, Error> {
+    pub fn file_content(&self, file: &Path) -> Result<&ID, Error> {
         match self.files.get(file) {
             Some(ids) => Ok(Self::content(ids)?),
             None => Err(Error::file_not_found(file)),
@@ -190,7 +190,7 @@ where
     /// Iterates over each file in the patchset, in arbitrary order, along with
     /// the content ID for the file. If the file is deleted in the patchset, the
     /// ID will be None.
-    pub fn file_content_iter(&self) -> impl Iterator<Item = (&OsString, &ID)> {
+    pub fn file_content_iter(&self) -> impl Iterator<Item = (&PathBuf, &ID)> {
         self.files
             .iter()
             .filter_map(|(file, ids)| ids.last().map(|id| (file, id)))
@@ -199,7 +199,7 @@ where
     /// Iterates over each file in the patchset, in arbitrary order, and
     /// provides the file and a Vec of all the content IDs that were squashed
     /// into the patchset for that file.
-    pub fn file_revision_iter(&self) -> impl Iterator<Item = (&OsString, &Vec<ID>)> {
+    pub fn file_revision_iter(&self) -> impl Iterator<Item = (&PathBuf, &Vec<ID>)> {
         self.files.iter()
     }
 
@@ -263,7 +263,7 @@ struct Commit<ID>
 where
     ID: Debug + Clone + Eq,
 {
-    path: OsString,
+    path: PathBuf,
     branches: Vec<Vec<u8>>,
     id: ID,
     time: SystemTime,
@@ -306,8 +306,8 @@ pub enum Error {
 }
 
 impl Error {
-    fn file_not_found(name: &OsStr) -> Self {
-        Self::FileNotFound(name.to_string_lossy().into())
+    fn file_not_found(name: &Path) -> Self {
+        Self::FileNotFound(name.display().to_string())
     }
 }
 
@@ -401,8 +401,8 @@ mod tests {
         assert_eq!(have, want);
     }
 
-    fn path(s: &str) -> OsString {
-        OsString::from_str(s).unwrap()
+    fn path(s: &str) -> PathBuf {
+        PathBuf::from_str(s).unwrap()
     }
 
     fn timestamp(ts: u64) -> SystemTime {

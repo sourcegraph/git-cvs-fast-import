@@ -1,6 +1,7 @@
 use std::{
     fmt::{Display, Write},
     io,
+    path::PathBuf,
 };
 
 use crate::{Command, Error, Identity, Mark};
@@ -144,17 +145,17 @@ pub enum FileCommand {
     Modify {
         mode: Mode,
         mark: Mark,
-        path: String,
+        path: PathBuf,
     },
 
     /// A deleted file.
-    Delete { path: String },
+    Delete { path: PathBuf },
 
     /// A copied file.
-    Copy { from: String, to: String },
+    Copy { from: PathBuf, to: PathBuf },
 
     /// A renamed file.
-    Rename { from: String, to: String },
+    Rename { from: PathBuf, to: PathBuf },
 
     /// A special command that deletes all files in the working tree. All files
     /// that should exist after this commit must be added using
@@ -165,10 +166,12 @@ pub enum FileCommand {
 impl Display for FileCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FileCommand::Modify { mode, mark, path } => write!(f, "M {} {} {}", mode, mark, path),
-            FileCommand::Delete { path } => write!(f, "D {}", path),
-            FileCommand::Copy { from, to } => write!(f, "C {} {}", from, to),
-            FileCommand::Rename { from, to } => write!(f, "R {} {}", from, to),
+            FileCommand::Modify { mode, mark, path } => {
+                write!(f, "M {} {} {}", mode, mark, path.display())
+            }
+            FileCommand::Delete { path } => write!(f, "D {}", path.display()),
+            FileCommand::Copy { from, to } => write!(f, "C {} {}", from.display(), to.display()),
+            FileCommand::Rename { from, to } => write!(f, "R {} {}", from.display(), to.display()),
             FileCommand::DeleteAll => write!(f, "deleteall"),
         }
     }
