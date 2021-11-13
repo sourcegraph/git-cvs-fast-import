@@ -1,5 +1,5 @@
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fs::File,
     io::ErrorKind,
     path::PathBuf,
@@ -42,6 +42,9 @@ struct Opt {
         help = "maximum time between file commits before they'll be considered different patch sets"
     )]
     delta: Duration,
+
+    #[structopt(long, help = "treat file discovery and parsing errors as non-fatal")]
+    ignore_file_errors: bool,
 
     #[structopt(short, long, help = "number of parallel workers")]
     jobs: Option<usize>,
@@ -99,19 +102,12 @@ async fn main() -> anyhow::Result<()> {
     let mark_file = dump_marks_to_file(&state).await?;
 
     // Set up our git-fast-import export using the marks, if any.
-    let (output, worker) = git_cvs_fast_import_process::new(mark_file.as_ref(), opt.output);
+    let (output, worker) = git_cvs_fast_import_process::new(mark_file.as_ref(), &opt.output);
 
     // Discover all files in the CVSROOT, and process each one into a new
     // Collector and the state.
     log::info!("starting file discovery");
-    let collector = discover_files(
-        &state,
-        &output,
-        opt.delta,
-        opt.jobs.unwrap_or_else(num_cpus::get),
-        &opt.cvsroot,
-        &opt.directories,
-    )?;
+    let collector = discover_files(&state, &output, &opt)?;
     log::info!("discovery phase done; parsing files");
 
     // Collect our observations into patchsets so we can send them.
@@ -151,32 +147,32 @@ async fn main() -> anyhow::Result<()> {
 
 /// Discover all files in the given path input and parse them into a Collector.
 ///
-/// If an item when iterating `paths` returns an error, then that error will be
-/// returned from this function.
-fn discover_files(
-    state: &Manager,
-    output: &Output,
-    delta: Duration,
-    parallel_jobs: usize,
-    cvsroot: &OsStr,
-    directories: &[OsString],
-) -> Result<Collector, anyhow::Error> {
+/// If an item when iterating `opt.directories` returns an error, then that
+/// error will be returned from this function.
+fn discover_files(state: &Manager, output: &Output, opt: &Opt) -> Result<Collector, anyhow::Error> {
     // Set up the observer and collector that we'll use during file discovery to
     // persist file revisions and detect patchsets.
-    let (observer, collector) = Observer::new(delta, state.clone());
+    let (observer, collector) = Observer::new(opt.delta, state.clone());
 
     // Create our discovery worker pool.
-    let discovery = Discovery::new(state, output, &observer, parallel_jobs, cvsroot);
+    let discovery = Discovery::new(
+        state,
+        output,
+        &observer,
+        opt.ignore_file_errors,
+        opt.jobs.unwrap_or_else(num_cpus::get),
+        &opt.cvsroot,
+    );
 
     // Send all the input paths to the discovery workers.
-    let paths: Vec<PathBuf> = if directories.is_empty() {
-        vec![cvsroot.into()]
+    let paths: Vec<PathBuf> = if opt.directories.is_empty() {
+        vec![opt.cvsroot.clone().into()]
     } else {
-        directories
+        opt.directories
             .iter()
             .map(|dir| {
                 let mut pb = PathBuf::new();
-                pb.push(cvsroot);
+                pb.push(&opt.cvsroot);
                 pb.push(dir);
 
                 pb

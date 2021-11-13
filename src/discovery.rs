@@ -13,6 +13,7 @@ use flume::{Receiver, Sender};
 use git_cvs_fast_import_process::Output;
 use git_cvs_fast_import_state::Manager;
 use git_fast_import::{Blob, Mark};
+use log::Level;
 use rcs_ed::{File, Script};
 use tokio::task;
 
@@ -42,6 +43,7 @@ impl Discovery {
         state: &Manager,
         output: &Output,
         observer: &Observer,
+        ignore_errors: bool,
         jobs: usize,
         prefix: &OsStr,
     ) -> Self {
@@ -51,7 +53,7 @@ impl Discovery {
 
         // Start each worker.
         for _i in 0..jobs {
-            let worker = Worker::new(&rx, observer, output, prefix, state);
+            let worker = Worker::new(&rx, observer, output, prefix, state, ignore_errors);
             task::spawn(async move { worker.work().await });
         }
 
@@ -71,6 +73,7 @@ struct Worker {
     prefix: OsString,
     rx: Receiver<OsString>,
     state: Manager,
+    ignore_errors: bool,
 }
 
 impl Worker {
@@ -81,6 +84,7 @@ impl Worker {
         output: &Output,
         prefix: &OsStr,
         state: &Manager,
+        ignore_errors: bool,
     ) -> Self {
         Self {
             observer: observer.clone(),
@@ -88,6 +92,7 @@ impl Worker {
             prefix: prefix.to_os_string(),
             rx: rx.clone(),
             state: state.clone(),
+            ignore_errors,
         }
     }
 
@@ -104,12 +109,21 @@ impl Worker {
 
             log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
             if let Err(e) = self.handle_path(&path).await {
-                log::warn!(
+                log::log!(
+                    if self.ignore_errors {
+                        Level::Warn
+                    } else {
+                        Level::Error
+                    },
                     "error processing {}: {:?}",
                     String::from_utf8_lossy(path.as_bytes()),
                     e
                 );
-                continue;
+                if self.ignore_errors {
+                    continue;
+                } else {
+                    return Err(e);
+                }
             }
         }
 
