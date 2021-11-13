@@ -18,9 +18,11 @@ use tokio::{
 };
 
 mod error;
+mod preflight;
 mod process;
 
 pub use self::error::Error;
+pub use self::preflight::preflight;
 
 // Command line options that are required by the [`Output`] object.
 //

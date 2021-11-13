@@ -85,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
         .adaptive_format_for_stderr(AdaptiveFormat::Detailed)
         .start()?;
 
+    // Preflight git to make sure we have a sane environment.
+    git_cvs_fast_import_process::preflight(&opt.output)?;
+
     // Set up our state manager, loading the store if it exists.
     let state = match File::open(&opt.store) {
         Ok(file) => {

@@ -7,6 +7,8 @@ use tokio::{
     task::JoinError,
 };
 
+use crate::preflight;
+
 /// Possible errors from the `process` module.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -36,6 +38,9 @@ pub enum Error {
 
     #[error("cannot read from git fast-import output/error pipe: {0:?}")]
     OutputPipeRead(std::io::Error),
+
+    #[error("{0}")]
+    Preflight(preflight::Error),
 
     #[error("channel send error: {0}")]
     Send(String),
