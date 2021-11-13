@@ -62,7 +62,7 @@ impl Manager {
         R: Read,
     {
         log::debug!("reading from speedy");
-        let ser = Ser::read_from_stream_buffered(reader)?;
+        let ser = Ser::read_from_stream_buffered(zstd::Decoder::new(reader)?)?;
         log::debug!("reading from speedy complete");
 
         if ser.version != 1 {
@@ -129,7 +129,11 @@ impl Manager {
         };
 
         log::debug!("writing to speedy");
-        ser.write_to_stream(writer)?;
+        {
+            let mut zstd_writer = zstd::Encoder::new(writer, 0)?;
+            ser.write_to_stream(&mut zstd_writer)?;
+            zstd_writer.finish()?;
+        }
         log::debug!("writing to speedy complete");
         Ok(())
     }
