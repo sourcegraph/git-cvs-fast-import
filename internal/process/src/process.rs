@@ -1,4 +1,4 @@
-use std::{fmt::Debug, io::Write, process::Stdio};
+use std::{fmt::Debug, io::Write, os::unix::prelude::ExitStatusExt, process::Stdio};
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, BufReader},
@@ -48,11 +48,24 @@ impl Process {
 
         Ok(Self {
             handle: task::spawn_blocking(move || {
-                if let Err(e) = child.wait() {
-                    log::error!("git fast-import exited with a non-zero status: {:?}", &e);
-                    Err(e.into())
-                } else {
-                    Ok(())
+                match child.wait().map(|status| (status, status.code())) {
+                    Ok((_, Some(code))) if code == 0 => {
+                        log::info!("git fast-import exited with a zero status");
+                        Ok(())
+                    }
+                    Ok((_, Some(code))) => {
+                        log::error!("git fast-import exited with a non-zero status: {}", code);
+                        Err(Error::ExitStatus(code))
+                    }
+                    Ok((status, None)) => {
+                        let signal = status.signal();
+                        log::error!("git fast-import exited due to a signal: {:?}", signal);
+                        Err(Error::ExitSignal(signal))
+                    }
+                    Err(e) => {
+                        log::error!("git fast-import exited due to an internal error: {:?}", &e);
+                        Err(e.into())
+                    }
                 }
             }),
             stdin,

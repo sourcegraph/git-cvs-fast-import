@@ -10,6 +10,12 @@ use tokio::{
 /// Possible errors from the `process` module.
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("exit due to signal {0:?}")]
+    ExitSignal(Option<i32>),
+
+    #[error("exit code {0}")]
+    ExitStatus(i32),
+
     #[error(transparent)]
     GitFastImport(#[from] git_fast_import::Error),
 
