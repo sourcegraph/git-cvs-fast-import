@@ -5,7 +5,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     os::unix::prelude::OsStrExt,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use comma_v::{Delta, DeltaText, Num, Sym};
@@ -31,7 +31,7 @@ use crate::observer::Observer;
 ///    the revision to the state and store.
 #[derive(Debug, Clone)]
 pub(crate) struct Discovery {
-    tx: Sender<OsString>,
+    tx: Sender<PathBuf>,
 }
 
 impl Discovery {
@@ -45,11 +45,11 @@ impl Discovery {
         observer: &Observer,
         ignore_errors: bool,
         jobs: usize,
-        prefix: &OsStr,
+        prefix: &Path,
     ) -> Self {
         // This is a multi-producer, multi-consumer channel that we use to fan
         // paths out to workers.
-        let (tx, rx) = flume::unbounded::<OsString>();
+        let (tx, rx) = flume::unbounded::<PathBuf>();
 
         // Start each worker.
         for _i in 0..jobs {
@@ -61,8 +61,8 @@ impl Discovery {
     }
 
     /// Queues the given path for parsing on the next available worker.
-    pub fn discover(&self, path: &OsStr) -> anyhow::Result<()> {
-        Ok(self.tx.send(OsString::from(path))?)
+    pub fn discover(&self, path: &Path) -> anyhow::Result<()> {
+        Ok(self.tx.send(path.to_path_buf())?)
     }
 }
 
@@ -70,8 +70,8 @@ impl Discovery {
 struct Worker {
     observer: Observer,
     output: Output,
-    prefix: OsString,
-    rx: Receiver<OsString>,
+    prefix: PathBuf,
+    rx: Receiver<PathBuf>,
     state: Manager,
     ignore_errors: bool,
 }
@@ -79,17 +79,17 @@ struct Worker {
 impl Worker {
     /// Instantiates a new worker.
     fn new(
-        rx: &Receiver<OsString>,
+        rx: &Receiver<PathBuf>,
         observer: &Observer,
         output: &Output,
-        prefix: &OsStr,
+        prefix: &Path,
         state: &Manager,
         ignore_errors: bool,
     ) -> Self {
         Self {
             observer: observer.clone(),
             output: output.clone(),
-            prefix: prefix.to_os_string(),
+            prefix: prefix.to_path_buf(),
             rx: rx.clone(),
             state: state.clone(),
             ignore_errors,
@@ -107,7 +107,7 @@ impl Worker {
                 continue;
             }
 
-            log::trace!("processing {}", String::from_utf8_lossy(path.as_bytes()));
+            log::trace!("processing {}", path.display());
             if let Err(e) = self.handle_path(&path).await {
                 log::log!(
                     if self.ignore_errors {
@@ -116,7 +116,7 @@ impl Worker {
                         Level::Error
                     },
                     "error processing {}: {:?}",
-                    String::from_utf8_lossy(path.as_bytes()),
+                    path.display(),
                     e
                 );
                 if self.ignore_errors {
@@ -131,15 +131,15 @@ impl Worker {
     }
 
     /// Handles an individual RCS file.
-    async fn handle_path(&self, path: &OsStr) -> anyhow::Result<()> {
+    async fn handle_path(&self, path: &Path) -> anyhow::Result<()> {
         // Parse the ,v file.
         let cv = comma_v::parse(&fs::read(path)?)?;
 
         // Set up an easier to display version of the path for logging purposes.
-        let disp = path.to_string_lossy();
+        let disp = path.display();
 
         // Calculate the real path of the file in the repository.
-        let real_path = munge_raw_path(Path::new(path), &self.prefix);
+        let real_path = munge_raw_path(path.as_ref(), &self.prefix);
 
         // Tags are defined as symbols in the RCS admin area, so we have them up
         // front rather than as we parse each revision. Let's set up a revision
@@ -254,11 +254,11 @@ impl FileRevisionHandler<'_> {
 /// Strips CVSROOT-specific components of the file path: specifically, removing
 /// the ,v suffix if present and stripping the Attic if it's the last directory
 /// in the path. Returns a newly allocated OsString.
-fn munge_raw_path(input: &Path, prefix: &OsStr) -> OsString {
+fn munge_raw_path(input: &Path, prefix: &Path) -> OsString {
     let unprefixed = input.strip_prefix(prefix).unwrap_or(input);
 
     if let Some(input_file) = unprefixed.file_name() {
-        let file = strip_comma_v_suffix(input_file).unwrap_or_else(|| OsString::from(input_file));
+        let file = strip_comma_v_suffix(input_file).unwrap_or_else(|| PathBuf::from(input_file));
         let path = strip_attic_suffix(unprefixed)
             .map(|path| path.join(file))
             .unwrap_or_else(|| input_file.into());
@@ -281,9 +281,9 @@ fn strip_attic_suffix(path: &Path) -> Option<&Path> {
         .flatten()
 }
 
-fn strip_comma_v_suffix(file: &OsStr) -> Option<OsString> {
+fn strip_comma_v_suffix(file: &OsStr) -> Option<PathBuf> {
     if let Some(stripped) = file.as_bytes().strip_suffix(b",v") {
-        return Some(OsString::from(OsStr::from_bytes(stripped)));
+        return Some(PathBuf::from(OsStr::from_bytes(stripped)));
     }
 
     None
@@ -298,7 +298,7 @@ mod tests {
             assert_eq!(
                 munge_raw_path(
                     Path::new(OsStr::from_bytes($input)),
-                    &OsStr::from_bytes($prefix),
+                    Path::new(OsStr::from_bytes($prefix)),
                 ),
                 OsString::from(OsStr::from_bytes($want))
             )
