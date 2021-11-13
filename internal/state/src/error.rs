@@ -31,6 +31,9 @@ pub enum Error {
     #[error("serialisation error: {0:?}")]
     Serialisation(#[from] bincode::Error),
 
+    #[error("speedy error: {0:?}")]
+    Speedy(#[from] speedy::Error),
+
     #[error("unknown serialised data version: {0}")]
     UnknownSerialisationVersion(u8),
 }

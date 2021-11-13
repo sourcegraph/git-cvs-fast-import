@@ -1,7 +1,4 @@
-//! In-memory state management for `git-cvs-fast-import`.
-//!
-//! `git-cvs-fast-import-store` essentially acts as a persistence layer for this
-//! package.
+//! State management for `git-cvs-fast-import`.
 
 use std::{
     ffi::OsStr,
@@ -11,7 +8,7 @@ use std::{
 };
 
 use git_fast_import::Mark;
-use serde::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{RwLock, RwLockReadGuard},
@@ -29,6 +26,7 @@ pub use patchset::PatchSet;
 
 mod tag;
 
+/// The top level in-memory state manager.
 #[derive(Debug, Clone, Default)]
 pub struct Manager {
     file_revisions: Arc<RwLock<file_revision::Store>>,
@@ -37,8 +35,15 @@ pub struct Manager {
     raw_marks: Arc<RwLock<Vec<u8>>>,
 }
 
-#[derive(Deserialize, Serialize)]
+/// The wrapper data structure used to persist the state in `Manager` to disk.
+///
+/// We use speedy to actually read and write this structure to disk: previously
+/// we used bincode, but speedy is many many multiples quicker at dumping and
+/// slurping u8 slices, which is all we're dealing with at this level.
+#[derive(Readable, Writable)]
 struct Ser {
+    /// The intention is to support additional fields in the future here, but
+    /// not necessarily to support different serialisation formats.
     version: u8,
     file_revisions: Vec<u8>,
     patchsets: Vec<u8>,
@@ -51,11 +56,14 @@ impl Manager {
         Self::default()
     }
 
+    /// Read the state from disk.
     pub async fn deserialize_from<R>(reader: R) -> Result<Self, Error>
     where
         R: Read,
     {
-        let ser: Ser = bincode::deserialize_from(reader)?;
+        log::debug!("reading from speedy");
+        let ser = Ser::read_from_stream_buffered(reader)?;
+        log::debug!("reading from speedy complete");
 
         if ser.version != 1 {
             return Err(Error::UnknownSerialisationVersion(ser.version));
@@ -66,6 +74,9 @@ impl Manager {
         let tags = ser.tags;
         let raw_marks = ser.raw_marks;
 
+        log::debug!("starting deserialisation");
+        // We'll parallelise the individual data structure deserialisations,
+        // since CPU is generally the blocker here.
         let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
             task::spawn(async move { bincode::deserialize(&file_revisions) }),
             task::spawn(async move { bincode::deserialize(&patchsets) }),
@@ -73,6 +84,7 @@ impl Manager {
             task::spawn(async move { bincode::deserialize(&raw_marks) }),
         )
         .unwrap();
+        log::debug!("deserialisation complete");
 
         Ok(Self {
             file_revisions: Arc::new(RwLock::new(file_revisions?)),
@@ -82,6 +94,7 @@ impl Manager {
         })
     }
 
+    /// Write the state to disk.
     pub async fn serialize_into<W>(self, writer: W) -> Result<(), Error>
     where
         W: Write,
@@ -91,6 +104,13 @@ impl Manager {
         let tags = self.tags.clone();
         let raw_marks = self.raw_marks.clone();
 
+        log::debug!("starting serialisation");
+        // We'll parallelise the individual data structure serialisations, since
+        // CPU is generally the blocker here.
+        //
+        // Note that we use bincode here: although bincode is slower than speedy
+        // (which is what we use for the outer wrapper `Ser`), it supports types
+        // behind `Arc`, and the parallelisation means this isn't _so_ bad.
         let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
             task::spawn(async move { bincode::serialize(&*file_revisions.read().await) }),
             task::spawn(async move { bincode::serialize(&*patchsets.read().await) }),
@@ -98,6 +118,7 @@ impl Manager {
             task::spawn(async move { bincode::serialize(&*raw_marks.read().await) }),
         )
         .unwrap();
+        log::debug!("serialisation complete");
 
         let ser = Ser {
             version: 1,
@@ -107,7 +128,9 @@ impl Manager {
             raw_marks: raw_marks?,
         };
 
-        bincode::serialize_into(writer, &ser)?;
+        log::debug!("writing to speedy");
+        ser.write_to_stream(writer)?;
+        log::debug!("writing to speedy complete");
         Ok(())
     }
 
