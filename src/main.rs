@@ -247,11 +247,9 @@ where
                 Some(mark) => builder.add_file_command(FileCommand::Modify {
                     mode: git_fast_import::Mode::Normal,
                     mark: mark.into(),
-                    path: path.to_string_lossy().into(),
+                    path: path.clone(),
                 }),
-                None => builder.add_file_command(FileCommand::Delete {
-                    path: path.to_string_lossy().into(),
-                }),
+                None => builder.add_file_command(FileCommand::Delete { path: path.clone() }),
             };
         }
 
@@ -313,15 +311,16 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
         if let Some(file_revision_ids) = state.get_file_revisions_for_tag(tag).await.iter() {
             for file_revision_id in file_revision_ids.iter() {
                 let file_revision = state.get_file_revision_by_id(*file_revision_id).await?;
-                let path = file_revision.key.path.to_string_lossy().into_owned();
 
                 match file_revision.mark {
                     Some(mark) => builder.add_file_command(FileCommand::Modify {
                         mode: git_fast_import::Mode::Normal,
                         mark: mark.into(),
-                        path,
+                        path: file_revision.key.path.clone(),
                     }),
-                    None => builder.add_file_command(FileCommand::Delete { path }),
+                    None => builder.add_file_command(FileCommand::Delete {
+                        path: file_revision.key.path.clone(),
+                    }),
                 };
 
                 // Find out which patchset this file revision is in, if any, and

@@ -50,7 +50,7 @@ impl Process {
             handle: task::spawn_blocking(move || {
                 match child.wait().map(|status| (status, status.code())) {
                     Ok((_, Some(code))) if code == 0 => {
-                        log::info!("git fast-import exited with a zero status");
+                        log::debug!("git fast-import exited with a zero status");
                         Ok(())
                     }
                     Ok((_, Some(code))) => {

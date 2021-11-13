@@ -1,8 +1,8 @@
 //! State management for `git-cvs-fast-import`.
 
 use std::{
-    ffi::OsStr,
     io::{Read, Write},
+    path::Path,
     sync::Arc,
     time::SystemTime,
 };
@@ -141,7 +141,7 @@ impl Manager {
     #[allow(clippy::too_many_arguments)]
     pub async fn add_file_revision<I>(
         &self,
-        path: &OsStr,
+        path: &Path,
         revision: &[u8],
         mark: Option<Mark>,
         branches: I,
@@ -155,7 +155,7 @@ impl Manager {
     {
         self.file_revisions.write().await.add(
             file_revision::Key {
-                path: path.to_os_string(),
+                path: path.to_path_buf(),
                 revision: revision.to_vec(),
             },
             mark.map(|mark| mark.into()),
@@ -187,13 +187,13 @@ impl Manager {
 
     pub async fn get_file_revision(
         &self,
-        path: &OsStr,
+        path: &Path,
         revision: &[u8],
     ) -> Result<Arc<FileRevision>, Error> {
         match self.file_revisions.read().await.get_by_key(path, revision) {
             Some(revision) => Ok(revision),
             None => Err(Error::NoFileRevisionForKey(file_revision::Key {
-                path: path.to_os_string(),
+                path: path.to_path_buf(),
                 revision: revision.to_vec(),
             })),
         }

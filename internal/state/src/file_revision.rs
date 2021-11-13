@@ -1,8 +1,8 @@
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
-    ffi::{OsStr, OsString},
     hash::Hash,
+    path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
 };
@@ -27,25 +27,25 @@ pub struct Mark(git_fast_import::Mark);
 //
 // Basically, we need to be able to key by a complex type without having to
 // clone its members just to do a lookup, so we want to be able to treat a
-// (&OsStr, &[u8]) tuple as being equivalent to the owned fields in Key.
+// (&Path, &[u8]) tuple as being equivalent to the owned fields in Key.
 trait Keyer {
-    fn to_key(&self) -> (&OsStr, &[u8]);
+    fn to_key(&self) -> (&Path, &[u8]);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct Key {
-    pub path: OsString,
+    pub path: PathBuf,
     pub revision: Vec<u8>,
 }
 
 impl Keyer for Key {
-    fn to_key(&self) -> (&OsStr, &[u8]) {
-        (self.path.as_os_str(), self.revision.as_slice())
+    fn to_key(&self) -> (&Path, &[u8]) {
+        (self.path.as_path(), self.revision.as_slice())
     }
 }
 
-impl Keyer for (&OsStr, &[u8]) {
-    fn to_key(&self) -> (&OsStr, &[u8]) {
+impl Keyer for (&Path, &[u8]) {
+    fn to_key(&self) -> (&Path, &[u8]) {
         (self.0, self.1)
     }
 }
@@ -56,7 +56,7 @@ impl<'a> Borrow<dyn Keyer + 'a> for Key {
     }
 }
 
-impl<'a> Borrow<dyn Keyer + 'a> for (&'a OsStr, &'a [u8]) {
+impl<'a> Borrow<dyn Keyer + 'a> for (&'a Path, &'a [u8]) {
     fn borrow(&self) -> &(dyn Keyer + 'a) {
         self
     }
@@ -135,7 +135,7 @@ impl Store {
         self.file_revisions.get(id.0).cloned()
     }
 
-    pub(crate) fn get_by_key(&self, path: &OsStr, revision: &[u8]) -> Option<Arc<FileRevision>> {
+    pub(crate) fn get_by_key(&self, path: &Path, revision: &[u8]) -> Option<Arc<FileRevision>> {
         self.by_key
             .get((path, revision).borrow() as &dyn Keyer)
             .map(|id| self.get_by_id(*id))

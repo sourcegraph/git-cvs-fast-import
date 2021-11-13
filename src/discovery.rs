@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fs,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
@@ -139,7 +139,7 @@ impl Worker {
         let disp = path.display();
 
         // Calculate the real path of the file in the repository.
-        let real_path = munge_raw_path(path.as_ref(), &self.prefix);
+        let real_path = munge_raw_path(path, &self.prefix);
 
         // Tags are defined as symbols in the RCS admin area, so we have them up
         // front rather than as we parse each revision. Let's set up a revision
@@ -201,7 +201,7 @@ impl Worker {
 struct FileRevisionHandler<'a> {
     worker: &'a Worker,
     revision_tags: HashMap<Num, Vec<Sym>>,
-    real_path: &'a OsStr,
+    real_path: &'a Path,
 }
 
 impl FileRevisionHandler<'_> {
@@ -254,7 +254,7 @@ impl FileRevisionHandler<'_> {
 /// Strips CVSROOT-specific components of the file path: specifically, removing
 /// the ,v suffix if present and stripping the Attic if it's the last directory
 /// in the path. Returns a newly allocated OsString.
-fn munge_raw_path(input: &Path, prefix: &Path) -> OsString {
+fn munge_raw_path(input: &Path, prefix: &Path) -> PathBuf {
     let unprefixed = input.strip_prefix(prefix).unwrap_or(input);
 
     if let Some(input_file) = unprefixed.file_name() {
@@ -263,7 +263,7 @@ fn munge_raw_path(input: &Path, prefix: &Path) -> OsString {
             .map(|path| path.join(file))
             .unwrap_or_else(|| input_file.into());
 
-        path.into_os_string()
+        path
     } else {
         unprefixed.into()
     }
@@ -282,6 +282,9 @@ fn strip_attic_suffix(path: &Path) -> Option<&Path> {
 }
 
 fn strip_comma_v_suffix(file: &OsStr) -> Option<PathBuf> {
+    // We use OsStr here because it has methods we need: Path doesn't allow for
+    // easy slicing within path components, and doesn't consider comma a file
+    // extension separator.
     if let Some(stripped) = file.as_bytes().strip_suffix(b",v") {
         return Some(PathBuf::from(OsStr::from_bytes(stripped)));
     }
@@ -300,7 +303,7 @@ mod tests {
                     Path::new(OsStr::from_bytes($input)),
                     Path::new(OsStr::from_bytes($prefix)),
                 ),
-                OsString::from(OsStr::from_bytes($want))
+                PathBuf::from(OsStr::from_bytes($want))
             )
         };
     }

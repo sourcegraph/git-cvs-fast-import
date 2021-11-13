@@ -1,5 +1,5 @@
 use std::{
-    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
@@ -40,7 +40,7 @@ pub(crate) struct Message {
 /// an implementation detail.
 #[derive(Debug)]
 pub(crate) struct FileRevision {
-    path: OsString,
+    path: PathBuf,
     revision: Vec<u8>,
     mark: Option<Mark>,
     branches: Vec<Vec<u8>>,
@@ -63,7 +63,7 @@ impl Observer {
             while let Some(msg) = file_revision_rx.recv().await {
                 let id = task_state
                     .add_file_revision(
-                        msg.file_revision.path.as_os_str(),
+                        msg.file_revision.path.as_path(),
                         &msg.file_revision.revision,
                         msg.file_revision.mark,
                         msg.file_revision.branches.iter(),
@@ -103,7 +103,7 @@ impl Observer {
     /// manager.
     pub(crate) async fn file_revision(
         &self,
-        path: &OsStr,
+        path: &Path,
         revision: &Num,
         branches: &[Num],
         mark: Option<Mark>,
@@ -114,7 +114,7 @@ impl Observer {
 
         self.file_revision_tx.send(Message {
             file_revision: FileRevision {
-                path: path.to_os_string(),
+                path: path.to_path_buf(),
                 revision: revision.to_vec(),
                 mark,
                 branches: branches.iter().map(|branch| branch.to_vec()).collect(),
