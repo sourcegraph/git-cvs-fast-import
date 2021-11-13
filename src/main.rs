@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::File,
     io::ErrorKind,
     path::PathBuf,
@@ -32,7 +31,7 @@ struct Opt {
         parse(from_os_str),
         help = "the CVSROOT, which must be a local directory; if omitted, the $CVSROOT environment variable will be used"
     )]
-    cvsroot: OsString,
+    cvsroot: PathBuf,
 
     #[structopt(
         short,
@@ -65,14 +64,14 @@ struct Opt {
         parse(from_os_str),
         help = "the file storing the repository metadata. If this file doesn't exist, it will be created, and the import will be treated as being from scratch, rather than incremental"
     )]
-    store: OsString,
+    store: PathBuf,
 
     #[structopt(
         name = "DIRECTORY",
         parse(from_os_str),
         help = "the top level directories to import from the CVSROOT; if omitted, all directories will be imported"
     )]
-    directories: Vec<OsString>,
+    directories: Vec<PathBuf>,
 }
 
 #[tokio::main]
@@ -91,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     // Set up our state manager, loading the store if it exists.
     let state = match File::open(&opt.store) {
         Ok(file) => {
-            log::info!("loading state from {}", opt.store.to_string_lossy());
+            log::info!("loading state from {}", opt.store.display());
             Manager::deserialize_from(&file).await?
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -138,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
     mark_file.close()?;
 
     // Finally, we can now store the in-memory state to the persistent store.
-    log::info!("persisting state to {}", opt.store.to_string_lossy());
+    log::info!("persisting state to {}", opt.store.display());
     {
         let file = File::create(&opt.store)?;
         state.serialize_into(&file).await?;
@@ -169,7 +168,7 @@ fn discover_files(state: &Manager, output: &Output, opt: &Opt) -> Result<Collect
 
     // Send all the input paths to the discovery workers.
     let paths: Vec<PathBuf> = if opt.directories.is_empty() {
-        vec![opt.cvsroot.clone().into()]
+        vec![opt.cvsroot.clone()]
     } else {
         opt.directories
             .iter()
@@ -185,7 +184,7 @@ fn discover_files(state: &Manager, output: &Output, opt: &Opt) -> Result<Collect
     for path in paths {
         for entry in WalkDir::new(path) {
             log::trace!("sending {:?} to discovery", &entry);
-            discovery.discover(entry?.path().as_os_str())?;
+            discovery.discover(entry?.path())?;
         }
     }
 
