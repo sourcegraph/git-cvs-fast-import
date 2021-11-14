@@ -10,7 +10,7 @@ use nom::{
     IResult,
 };
 
-use crate::types;
+use crate::{num, types};
 
 mod char;
 
@@ -121,7 +121,7 @@ fn admin(input: &[u8]) -> IResult<&[u8], types::Admin> {
     )(input)
 }
 
-fn delta(input: &[u8]) -> IResult<&[u8], (types::Num, types::Delta)> {
+fn delta(input: &[u8]) -> IResult<&[u8], (num::Num, types::Delta)> {
     map(
         tuple((
             terminated(num, multispace1),
@@ -174,7 +174,7 @@ fn delta(input: &[u8]) -> IResult<&[u8], (types::Num, types::Delta)> {
     )(input)
 }
 
-fn delta_text(input: &[u8]) -> IResult<&[u8], (types::Num, types::DeltaText)> {
+fn delta_text(input: &[u8]) -> IResult<&[u8], (num::Num, types::DeltaText)> {
     map(
         tuple((
             num,
@@ -193,16 +193,18 @@ fn desc(input: &[u8]) -> IResult<&[u8], types::Desc> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use chrono::DateTime;
 
-    use crate::types::Num;
+    use crate::num::Num;
 
     use super::*;
 
     #[test]
     fn test_admin() {
         let have = admin(include_bytes!("fixtures/admin/input")).unwrap().1;
-        assert_eq!(*have.head.unwrap(), b"1.1");
+        assert_eq!(have.head.unwrap().to_string(), "1.1");
         assert!(have.branch.is_none());
         assert_eq!(have.access.len(), 0);
         assert_eq!(have.symbols.len(), 0);
@@ -216,7 +218,7 @@ mod tests {
     #[test]
     fn test_delta() {
         let (num, have) = delta(include_bytes!("fixtures/delta/input")).unwrap().1;
-        assert_eq!(*num, b"1.2");
+        assert_eq!(num.to_string(), "1.2");
         assert_eq!(
             have.date,
             DateTime::parse_from_rfc3339("2021-08-20T17:34:26+00:00")
@@ -228,11 +230,11 @@ mod tests {
         assert_eq!(
             have.branches,
             vec![
-                Num::from(b"1.2.2.1".to_vec()),
-                Num::from(b"1.2.4.1".to_vec())
+                Num::from_str("1.2.2.1").unwrap(),
+                Num::from_str("1.2.4.1").unwrap()
             ]
         );
-        assert_eq!(*have.next.unwrap(), b"1.1");
+        assert_eq!(have.next.unwrap().to_string(), "1.1");
         assert!(have.commit_id.is_none());
     }
 
@@ -241,12 +243,12 @@ mod tests {
         let (num, have) = delta_text(include_bytes!("fixtures/delta_text/input"))
             .unwrap()
             .1;
-        assert_eq!(*num, b"1.1");
+        assert_eq!(num.to_string(), "1.1");
         assert_eq!(*have.log, include_bytes!("fixtures/delta_text/log"),);
         assert_eq!(*have.text, include_bytes!("fixtures/delta_text/text"),);
 
         let (num, have) = delta_text(b"1.2 log @@ text @@").unwrap().1;
-        assert_eq!(*num, b"1.2");
+        assert_eq!(num.to_string(), "1.2");
         assert_eq!(*have.log, b"");
         assert_eq!(*have.text, b"");
     }
@@ -263,11 +265,14 @@ mod tests {
         let have = file(include_bytes!("fixtures/file/input")).unwrap().1;
 
         // We'll just spot check.
-        assert_eq!(*have.admin.head.unwrap(), b"1.4");
+        assert_eq!(have.admin.head.unwrap().to_string(), "1.4");
 
         assert_eq!(have.delta.len(), 4);
         assert_eq!(
-            have.delta.get(&types::Num(b"1.4".to_vec())).unwrap().date,
+            have.delta
+                .get(&num::Num::from_str("1.4").unwrap())
+                .unwrap()
+                .date,
             DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")
                 .unwrap()
                 .into(),
@@ -279,7 +284,7 @@ mod tests {
         assert_eq!(
             *have
                 .delta_text
-                .get(&types::Num(b"1.1".to_vec()))
+                .get(&num::Num::from_str("1.1").unwrap())
                 .unwrap()
                 .text,
             b"d5 3\n"

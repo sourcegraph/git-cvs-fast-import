@@ -78,24 +78,16 @@ where
     /// responsibility of the caller to be able to map that back.
     ///
     /// If `id` is `None`, then this commit represents the file being deleted.
-    pub fn add_file_commit<BI>(
+    pub fn add_file_commit(
         &mut self,
         path: PathBuf,
         id: ID,
-        branches: BI,
         author: String,
         message: String,
         time: SystemTime,
-    ) where
-        BI: IntoIterator<Item = Vec<u8>>,
-    {
+    ) {
         let key = CommitKey { author, message };
-        let value = Commit {
-            path,
-            branches: branches.into_iter().collect(),
-            id,
-            time,
-        };
+        let value = Commit { path, id, time };
 
         if let Some(v) = self.file_commits.get_mut(&key) {
             v.push(value);
@@ -119,7 +111,6 @@ where
             let mut last = None;
             let mut pending_files = HashMap::new();
 
-            // TODO: do something useful with the branches.
             for commit in commits.into_iter_sorted() {
                 if let Some(last) = last {
                     if commit.time.duration_since(last).unwrap_or_default() > self.delta {
@@ -264,7 +255,6 @@ where
     ID: Debug + Clone + Eq,
 {
     path: PathBuf,
-    branches: Vec<Vec<u8>>,
     id: ID,
     time: SystemTime,
 }
@@ -320,7 +310,6 @@ mod tests {
     #[test]
     fn test_detector() {
         let mut detector = Detector::new(Duration::from_secs(120));
-        let branches = vec![b"HEAD".to_vec()];
 
         // Add two files on the same commit.
         let author = String::from("author");
@@ -329,7 +318,6 @@ mod tests {
         detector.add_file_commit(
             path("foo"),
             1,
-            branches.clone(),
             author.clone(),
             message.clone(),
             timestamp(100),
@@ -338,7 +326,6 @@ mod tests {
         detector.add_file_commit(
             path("bar"),
             2,
-            branches.clone(),
             author.clone(),
             message.clone(),
             timestamp(101),
@@ -348,7 +335,6 @@ mod tests {
         detector.add_file_commit(
             path("foo"),
             3,
-            branches.clone(),
             author.clone(),
             message.clone(),
             timestamp(300),
@@ -358,21 +344,13 @@ mod tests {
         detector.add_file_commit(
             path("bar"),
             4,
-            branches.clone(),
             author.clone(),
             String::from("this is a different message"),
             timestamp(90),
         );
 
         // Re-add foo on the same commit as the first one.
-        detector.add_file_commit(
-            path("foo"),
-            5,
-            branches,
-            author.clone(),
-            message,
-            timestamp(120),
-        );
+        detector.add_file_commit(path("foo"), 5, author.clone(), message, timestamp(120));
 
         let have: Vec<PatchSet<i32>> = detector.into_patchset_iter().collect();
         let want: Vec<PatchSet<i32>> = vec![

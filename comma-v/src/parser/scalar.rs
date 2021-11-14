@@ -1,4 +1,4 @@
-use std::{fmt::Debug, str::FromStr, time::SystemTime};
+use std::{convert::TryFrom, fmt::Debug, str::FromStr, time::SystemTime};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use nom::{
@@ -13,7 +13,7 @@ use nom::{
 use thiserror::Error;
 
 use super::char::*;
-use crate::types;
+use crate::{num, types};
 
 pub(super) fn integrity_string(input: &[u8]) -> IResult<&[u8], types::IntString> {
     // TODO: thirdp support
@@ -33,8 +33,8 @@ pub(super) fn numlike(input: &[u8]) -> IResult<&[u8], &[u8]> {
     take_while1(|c| c == b'.' || (b'0'..=b'9').contains(&c))(input)
 }
 
-pub(super) fn num(input: &[u8]) -> IResult<&[u8], types::Num> {
-    map(numlike, |bytes| types::Num(Vec::from(bytes)))(input)
+pub(super) fn num(input: &[u8]) -> IResult<&[u8], num::Num> {
+    map_res(numlike, num::Num::try_from)(input)
 }
 
 pub(super) fn string_literal(input: &[u8]) -> IResult<&[u8], &[u8]> {

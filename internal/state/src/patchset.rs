@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
     time::SystemTime,
 };
@@ -14,11 +14,10 @@ use crate::file_revision;
 )]
 pub struct Mark(git_fast_import::Mark);
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PatchSet {
-    pub branch: Vec<u8>,
     pub time: SystemTime,
-    pub file_revisions: Vec<file_revision::ID>,
+    pub file_revisions: BTreeSet<file_revision::ID>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -30,6 +29,8 @@ pub(crate) struct Store {
     by_file_revision: BTreeMap<file_revision::ID, Vec<Mark>>,
 
     by_branch: HashMap<Vec<u8>, Vec<Mark>>,
+
+    by_content: HashMap<Arc<PatchSet>, Mark>,
 }
 
 impl Store {
@@ -43,11 +44,6 @@ impl Store {
         I: Iterator<Item = file_revision::ID>,
     {
         let branch = Vec::from(branch);
-        let file_revisions: Vec<file_revision::ID> = file_revision_iter.collect();
-
-        for id in file_revisions.iter() {
-            self.by_file_revision.entry(*id).or_default().push(mark);
-        }
 
         if let Some(marks) = self.by_branch.get_mut(&branch) {
             marks.push(mark);
@@ -55,14 +51,33 @@ impl Store {
             self.by_branch.insert(branch.clone(), vec![mark]);
         }
 
-        self.patchsets.insert(
-            mark,
-            Arc::new(PatchSet {
-                branch,
-                time: *time,
-                file_revisions,
-            }),
-        );
+        let patchset = Arc::new(build_patchset(*time, file_revision_iter));
+        for id in patchset.file_revisions.iter() {
+            self.by_file_revision.entry(*id).or_default().push(mark);
+        }
+
+        self.by_content.insert(patchset.clone(), mark);
+        self.patchsets.insert(mark, patchset);
+    }
+
+    pub(crate) fn add_branch_to_patchset(&mut self, mark: Mark, branch: &[u8]) {
+        self.by_branch
+            .entry(branch.to_vec())
+            .or_default()
+            .push(mark);
+    }
+
+    pub(crate) fn get_mark_for_content<I>(
+        &self,
+        time: SystemTime,
+        file_revision_iter: I,
+    ) -> Option<Mark>
+    where
+        I: Iterator<Item = file_revision::ID>,
+    {
+        self.by_content
+            .get(&Arc::new(build_patchset(time, file_revision_iter)))
+            .copied()
     }
 
     pub(crate) fn get_by_mark(&self, mark: &Mark) -> Option<Arc<PatchSet>> {
@@ -78,5 +93,15 @@ impl Store {
             .get(branch)
             .map(|marks| marks.last().copied())
             .flatten()
+    }
+}
+
+fn build_patchset<I>(time: SystemTime, file_revision_iter: I) -> PatchSet
+where
+    I: Iterator<Item = file_revision::ID>,
+{
+    PatchSet {
+        time,
+        file_revisions: file_revision_iter.collect(),
     }
 }
