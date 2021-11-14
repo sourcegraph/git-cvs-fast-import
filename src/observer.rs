@@ -1,4 +1,6 @@
 use std::{
+    borrow::Borrow,
+    collections::HashMap,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -41,7 +43,7 @@ pub(crate) struct Message {
 #[derive(Debug)]
 pub(crate) struct FileRevision {
     path: PathBuf,
-    revision: Vec<u8>,
+    revision: String,
     mark: Option<Mark>,
     branches: Vec<Vec<u8>>,
     author: String,
@@ -58,13 +60,13 @@ impl Observer {
 
         let task_state = state.clone();
         let join_handle = task::spawn(async move {
-            let mut detector = Detector::new(delta);
+            let mut detectors = HashMap::new();
 
             while let Some(msg) = file_revision_rx.recv().await {
                 let id = task_state
                     .add_file_revision(
                         msg.file_revision.path.as_path(),
-                        &msg.file_revision.revision,
+                        &msg.file_revision.revision.to_string(),
                         msg.file_revision.mark,
                         msg.file_revision.branches.iter(),
                         &msg.file_revision.author,
@@ -73,21 +75,26 @@ impl Observer {
                     )
                     .await?;
 
-                detector.add_file_commit(
-                    msg.file_revision.path,
-                    id,
-                    msg.file_revision.branches,
-                    msg.file_revision.author,
-                    msg.file_revision.message,
-                    msg.file_revision.time,
-                );
+                for branch in msg.file_revision.branches.iter() {
+                    let detector = detectors
+                        .entry(branch.clone())
+                        .or_insert_with(|| Detector::new(delta));
+
+                    detector.add_file_commit(
+                        msg.file_revision.path.clone(),
+                        id,
+                        msg.file_revision.author.clone(),
+                        msg.file_revision.message.clone(),
+                        msg.file_revision.time,
+                    );
+                }
 
                 msg.id_tx
                     .send(id)
                     .expect("cannot return file ID back to caller")
             }
 
-            Ok::<Detector<FileRevisionID>, Error>(detector)
+            Ok::<HashMap<Vec<u8>, Detector<FileRevisionID>>, Error>(detectors)
         });
 
         (
@@ -101,23 +108,27 @@ impl Observer {
 
     /// Observe a single file revision, and return its ID as stored in the state
     /// manager.
-    pub(crate) async fn file_revision(
+    pub(crate) async fn file_revision<I>(
         &self,
         path: &Path,
         revision: &Num,
-        branches: &[Num],
+        branches: I,
         mark: Option<Mark>,
         delta: &Delta,
         text: &DeltaText,
-    ) -> Result<FileRevisionID, Error> {
+    ) -> Result<FileRevisionID, Error>
+    where
+        I: Iterator,
+        I::Item: Borrow<Sym>,
+    {
         let (tx, rx) = oneshot::channel();
 
         self.file_revision_tx.send(Message {
             file_revision: FileRevision {
                 path: path.to_path_buf(),
-                revision: revision.to_vec(),
+                revision: revision.to_string(),
                 mark,
-                branches: branches.iter().map(|branch| branch.to_vec()).collect(),
+                branches: branches.map(|branch| branch.borrow().to_vec()).collect(),
                 author: String::from_utf8_lossy(&delta.author).into_owned(),
                 message: String::from_utf8_lossy(&text.log).into_owned(),
                 time: delta.date,
@@ -138,7 +149,7 @@ impl Observer {
 /// then can be used to access the observation result.
 #[derive(Debug)]
 pub(crate) struct Collector {
-    join_handle: JoinHandle<Result<Detector<FileRevisionID>, Error>>,
+    join_handle: JoinHandle<Result<HashMap<Vec<u8>, Detector<FileRevisionID>>, Error>>,
 }
 
 /// An object that can be joined to wait for the results of the [`Observer`].
@@ -146,19 +157,26 @@ impl Collector {
     /// Waits for the observations to be complete, the results their results.
     pub(crate) async fn join(self) -> Result<ObservationResult, Error> {
         Ok(ObservationResult {
-            patchsets: self.join_handle.await??.into_patchset_iter().collect(),
+            branches: self
+                .join_handle
+                .await??
+                .into_iter()
+                .map(|(branch, detector)| (branch, detector.into_patchset_iter().collect()))
+                .collect(),
         })
     }
 }
 
 /// The result of observing file revisions and tags with [`Observer`].
 pub(crate) struct ObservationResult {
-    patchsets: Vec<PatchSet<FileRevisionID>>,
+    branches: HashMap<Vec<u8>, Vec<PatchSet<FileRevisionID>>>,
 }
 
 impl ObservationResult {
-    pub(crate) fn patchset_iter(&self) -> impl Iterator<Item = &PatchSet<FileRevisionID>> {
-        self.patchsets.iter()
+    pub(crate) fn branch_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Vec<u8>, &Vec<PatchSet<FileRevisionID>>)> {
+        self.branches.iter()
     }
 }
 

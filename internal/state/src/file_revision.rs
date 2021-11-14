@@ -13,12 +13,36 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 
 #[derive(
-    Debug, Display, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into,
+    Debug,
+    Display,
+    Deserialize,
+    Serialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    From,
+    Into,
+    Hash,
 )]
 pub struct ID(usize);
 
 #[derive(
-    Debug, Display, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, From, Into,
+    Debug,
+    Display,
+    Deserialize,
+    Serialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    From,
+    Into,
+    Hash,
 )]
 pub struct Mark(git_fast_import::Mark);
 
@@ -29,23 +53,23 @@ pub struct Mark(git_fast_import::Mark);
 // clone its members just to do a lookup, so we want to be able to treat a
 // (&Path, &[u8]) tuple as being equivalent to the owned fields in Key.
 trait Keyer {
-    fn to_key(&self) -> (&Path, &[u8]);
+    fn to_key(&self) -> (&Path, &str);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct Key {
     pub path: PathBuf,
-    pub revision: Vec<u8>,
+    pub revision: String,
 }
 
 impl Keyer for Key {
-    fn to_key(&self) -> (&Path, &[u8]) {
-        (self.path.as_path(), self.revision.as_slice())
+    fn to_key(&self) -> (&Path, &str) {
+        (self.path.as_path(), self.revision.as_str())
     }
 }
 
-impl Keyer for (&Path, &[u8]) {
-    fn to_key(&self) -> (&Path, &[u8]) {
+impl Keyer for (&Path, &str) {
+    fn to_key(&self) -> (&Path, &str) {
         (self.0, self.1)
     }
 }
@@ -56,7 +80,7 @@ impl<'a> Borrow<dyn Keyer + 'a> for Key {
     }
 }
 
-impl<'a> Borrow<dyn Keyer + 'a> for (&'a Path, &'a [u8]) {
+impl<'a> Borrow<dyn Keyer + 'a> for (&'a Path, &'a str) {
     fn borrow(&self) -> &(dyn Keyer + 'a) {
         self
     }
@@ -135,7 +159,7 @@ impl Store {
         self.file_revisions.get(id.0).cloned()
     }
 
-    pub(crate) fn get_by_key(&self, path: &Path, revision: &[u8]) -> Option<Arc<FileRevision>> {
+    pub(crate) fn get_by_key(&self, path: &Path, revision: &str) -> Option<Arc<FileRevision>> {
         self.by_key
             .get((path, revision).borrow() as &dyn Keyer)
             .map(|id| self.get_by_id(*id))

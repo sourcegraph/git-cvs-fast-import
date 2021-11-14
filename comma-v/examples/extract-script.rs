@@ -2,6 +2,7 @@ use std::{
     fs,
     io::{self, Write},
     path::PathBuf,
+    str::FromStr,
 };
 
 use comma_v::Num;
@@ -19,9 +20,8 @@ struct Opt {
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
 
-    let revision: Vec<u8> = opt.revision.as_bytes().to_vec();
     let file = comma_v::parse(&fs::read(&opt.file)?)?;
-    match file.delta_text.get(&Num::from(revision)) {
+    match file.delta_text.get(&Num::from_str(&opt.revision)?) {
         Some(dt) => {
             io::stdout().write_all(&dt.text.0)?;
         }

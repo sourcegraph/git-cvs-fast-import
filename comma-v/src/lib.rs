@@ -1,15 +1,13 @@
-use nom::{error::ErrorKind, Finish};
-use thiserror::Error;
+use nom::Finish;
 
+mod error;
+mod num;
 mod parser;
 mod types;
-pub use types::*;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("parse error of kind {kind:?} at location {location:?}")]
-    ParseError { location: Vec<u8>, kind: ErrorKind },
-}
+pub use error::Error;
+pub use num::Num;
+pub use types::*;
 
 /// Parses a full RCS file.
 pub fn parse(input: &[u8]) -> Result<File, Error> {

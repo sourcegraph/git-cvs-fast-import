@@ -1,6 +1,8 @@
 use derive_more::{Deref, From, Into};
 use eq_macro::EqU8;
-use std::{collections::HashMap, fmt::Display, io::Cursor, time::SystemTime};
+use std::{collections::HashMap, io::Cursor, time::SystemTime};
+
+use crate::Num;
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -73,15 +75,6 @@ pub type Desc = VString;
 pub struct DeltaText {
     pub log: VString,
     pub text: VString,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]
-pub struct Num(pub Vec<u8>);
-
-impl Display for Num {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(&self.0))
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, EqU8, Deref, From, Into, Hash)]

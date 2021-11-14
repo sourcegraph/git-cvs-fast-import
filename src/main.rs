@@ -116,7 +116,9 @@ async fn main() -> anyhow::Result<()> {
     let result = collector.join().await?;
     log::info!("file parsing complete; sending patchsets");
 
-    send_patchsets(&state, &output, b"main", result.patchset_iter()).await?;
+    for (branch, patchsets) in result.branch_iter() {
+        send_patchsets(&state, &output, branch, patchsets.iter()).await?;
+    }
     log::info!("main patchsets sent; sending tags");
 
     send_tags(&state, &output).await?;
@@ -216,6 +218,8 @@ async fn send_patchsets<'a, I>(
 where
     I: Iterator<Item = &'a PatchSet<FileRevisionID>>,
 {
+    let branch_str = std::str::from_utf8(branch)?;
+
     // All commits except for the very first one will refer to their parent via
     // the from marker, so let's set that up.
     let mut from: Option<Mark> = state
@@ -225,7 +229,7 @@ where
 
     for patchset in patchset_iter {
         // We have a patchset, so let's turn it into a Git commit.
-        let mut builder = CommitBuilder::new("refs/heads/main".into());
+        let mut builder = CommitBuilder::new(format!("refs/heads/{}", branch_str));
         builder
             .committer(Identity::new(None, patchset.author.clone(), patchset.time)?)
             .message(patchset.message.clone());
@@ -253,26 +257,41 @@ where
             };
         }
 
-        // Actually send the commit to git-fast-import and get the commit mark
-        // back.
-        let mark = output.commit(builder.build()?).await?;
+        // Calculate the file revision IDs.
+        let file_revision_ids = patchset
+            .file_revision_iter()
+            .map(|(_path, ids)| ids)
+            .flatten()
+            .copied()
+            .collect::<Vec<FileRevisionID>>();
 
-        // Save the patchset and its mark to the state (and eventually the
-        // store).
-        state
-            .add_patchset(
-                mark,
-                branch,
-                &patchset.time,
-                patchset
-                    .file_revision_iter()
-                    .map(|(_path, ids)| ids)
-                    .flatten()
-                    .copied(),
-            )
-            .await;
+        // Check if we have already sent the commit to git-fast-import.
+        if let Some(mark) = state
+            .get_mark_from_patchset_content(&patchset.time, file_revision_ids.iter().copied())
+            .await
+        {
+            from = Some(mark);
 
-        from = Some(mark);
+            // Let's add this branch to the patchset.
+            state.add_branch_to_patchset_mark(mark, branch).await;
+        } else {
+            // Actually send the commit to git-fast-import and get the commit
+            // mark back.
+            let mark = output.commit(builder.build()?).await?;
+
+            // Save the patchset and its mark to the state (and eventually the
+            // store).
+            state
+                .add_patchset(mark, branch, &patchset.time, file_revision_ids.into_iter())
+                .await;
+
+            from = Some(mark);
+        }
+    }
+
+    // Set the HEAD of the branch in Git.
+    if let Some(head_mark) = from {
+        output.branch(branch_str, head_mark).await?;
     }
 
     Ok(())

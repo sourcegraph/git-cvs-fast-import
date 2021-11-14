@@ -61,9 +61,9 @@ impl Manager {
     where
         R: Read,
     {
-        log::debug!("reading from speedy");
+        log::warn!("reading from speedy");
         let ser = Ser::read_from_stream_buffered(zstd::Decoder::new(reader)?)?;
-        log::debug!("reading from speedy complete");
+        log::warn!("reading from speedy complete");
 
         if ser.version != 1 {
             return Err(Error::UnknownSerialisationVersion(ser.version));
@@ -74,7 +74,7 @@ impl Manager {
         let tags = ser.tags;
         let raw_marks = ser.raw_marks;
 
-        log::debug!("starting deserialisation");
+        log::warn!("starting deserialisation");
         // We'll parallelise the individual data structure deserialisations,
         // since CPU is generally the blocker here.
         let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
@@ -84,7 +84,7 @@ impl Manager {
             task::spawn(async move { bincode::deserialize(&raw_marks) }),
         )
         .unwrap();
-        log::debug!("deserialisation complete");
+        log::warn!("deserialisation complete");
 
         Ok(Self {
             file_revisions: Arc::new(RwLock::new(file_revisions?)),
@@ -104,7 +104,7 @@ impl Manager {
         let tags = self.tags.clone();
         let raw_marks = self.raw_marks.clone();
 
-        log::debug!("starting serialisation");
+        log::warn!("starting serialisation");
         // We'll parallelise the individual data structure serialisations, since
         // CPU is generally the blocker here.
         //
@@ -118,7 +118,7 @@ impl Manager {
             task::spawn(async move { bincode::serialize(&*raw_marks.read().await) }),
         )
         .unwrap();
-        log::debug!("serialisation complete");
+        log::warn!("serialisation complete");
 
         let ser = Ser {
             version: 1,
@@ -128,13 +128,13 @@ impl Manager {
             raw_marks: raw_marks?,
         };
 
-        log::debug!("writing to speedy");
+        log::warn!("writing to speedy");
         {
             let mut zstd_writer = zstd::Encoder::new(writer, 0)?;
             ser.write_to_stream(&mut zstd_writer)?;
             zstd_writer.finish()?;
         }
-        log::debug!("writing to speedy complete");
+        log::warn!("writing to speedy complete");
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl Manager {
     pub async fn add_file_revision<I>(
         &self,
         path: &Path,
-        revision: &[u8],
+        revision: &str,
         mark: Option<Mark>,
         branches: I,
         author: &str,
@@ -156,7 +156,7 @@ impl Manager {
         self.file_revisions.write().await.add(
             file_revision::Key {
                 path: path.to_path_buf(),
-                revision: revision.to_vec(),
+                revision: revision.to_string(),
             },
             mark.map(|mark| mark.into()),
             branches,
@@ -181,6 +181,13 @@ impl Manager {
             .add(mark.into(), branch, time, file_revision_iter)
     }
 
+    pub async fn add_branch_to_patchset_mark(&self, mark: Mark, branch: &[u8]) {
+        self.patchsets
+            .write()
+            .await
+            .add_branch_to_patchset(mark.into(), branch)
+    }
+
     pub async fn add_tag(&self, tag: &[u8], file_revision_id: file_revision::ID) {
         self.tags.write().await.add(tag, file_revision_id)
     }
@@ -188,13 +195,13 @@ impl Manager {
     pub async fn get_file_revision(
         &self,
         path: &Path,
-        revision: &[u8],
+        revision: &str,
     ) -> Result<Arc<FileRevision>, Error> {
         match self.file_revisions.read().await.get_by_key(path, revision) {
             Some(revision) => Ok(revision),
             None => Err(Error::NoFileRevisionForKey(file_revision::Key {
                 path: path.to_path_buf(),
-                revision: revision.to_vec(),
+                revision: revision.to_string(),
             })),
         }
     }
@@ -211,6 +218,21 @@ impl Manager {
 
     pub async fn get_last_patchset_mark_on_branch(&self, branch: &[u8]) -> Option<patchset::Mark> {
         self.patchsets.read().await.get_last_mark_on_branch(branch)
+    }
+
+    pub async fn get_mark_from_patchset_content<I>(
+        &self,
+        time: &SystemTime,
+        file_revision_iter: I,
+    ) -> Option<Mark>
+    where
+        I: Iterator<Item = file_revision::ID>,
+    {
+        self.patchsets
+            .read()
+            .await
+            .get_mark_for_content(*time, file_revision_iter)
+            .map(|mark| mark.into())
     }
 
     pub async fn get_patchset_from_mark(&self, mark: &Mark) -> Result<Arc<PatchSet>, Error> {

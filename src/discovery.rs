@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use async_recursion::async_recursion;
 use comma_v::{Delta, DeltaText, Num, Sym};
 use flume::{Receiver, Sender};
 use git_cvs_fast_import_process::Output;
@@ -107,6 +108,11 @@ impl Worker {
                 continue;
             }
 
+            if !path.as_os_str().as_bytes().ends_with(b",v") {
+                log::trace!("ignoring {} due to non-,v suffix", path.display());
+                continue;
+            }
+
             log::trace!("processing {}", path.display());
             if let Err(e) = self.handle_path(&path).await {
                 log::log!(
@@ -144,17 +150,30 @@ impl Worker {
         // Tags are defined as symbols in the RCS admin area, so we have them up
         // front rather than as we parse each revision. Let's set up a revision
         // -> tags map that we can use to send tags as we send revisions.
+        let mut branches: HashMap<Sym, Num> = HashMap::new();
         let mut revision_tags: HashMap<Num, Vec<Sym>> = HashMap::new();
         for (tag, revision) in cv.admin.symbols.iter() {
-            revision_tags
-                .entry(revision.clone())
-                .or_default()
-                .push(tag.clone());
+            match revision {
+                Num::Branch(_) => {
+                    branches.insert(tag.clone(), revision.clone());
+                }
+                Num::Commit(_) => {
+                    revision_tags
+                        .entry(revision.clone())
+                        .or_default()
+                        .push(tag.clone());
+                }
+            }
+        }
+        if let Some(ref head) = cv.admin.head {
+            // TODO: don't hard code "main" as the HEAD branch name.
+            branches.insert(Sym::from(b"main".to_vec()), head.to_branch());
         }
 
         // Set up the file revision handler.
         let handler = FileRevisionHandler {
             worker: self,
+            branches,
             revision_tags,
             real_path: &real_path,
         };
@@ -165,41 +184,64 @@ impl Worker {
             Some(num) => num,
             None => anyhow::bail!("{}: cannot find HEAD revision", disp),
         };
-        let (mut delta, mut delta_text) = cv.revision(head_num).unwrap();
         log::trace!("{}: found HEAD revision {}", disp, head_num);
-        let mut file = File::new(delta_text.text.as_cursor())?;
 
-        let mark = handler
-            .handle_revision(&file, head_num, delta, delta_text)
-            .await?;
-        log::trace!("{}: wrote HEAD to mark {:?}", disp, mark);
+        handle_tree(&handler, &cv, path, None, head_num).await
+    }
+}
 
-        // Now we can work our way down the branch.
-        //
-        // TODO: handle moving back up on branches.
-        while let Some(next_num) = &delta.next {
-            let rev = cv.revision(next_num).unwrap();
-            delta = rev.0;
-            delta_text = rev.1;
+#[async_recursion]
+async fn handle_tree(
+    handler: &FileRevisionHandler<'_>,
+    cv: &comma_v::File,
+    path: &Path,
+    mut contents: Option<File>,
+    revision: &Num,
+) -> anyhow::Result<()> {
+    let mut revision = revision;
 
-            log::trace!("{}: iterated to {}", &disp, next_num);
+    loop {
+        let (delta, delta_text) = cv.revision(revision).unwrap();
+        log::trace!("{}: iterated to {}", path.display(), revision);
 
+        if let Some(ref mut contents) = contents {
             let commands = Script::parse(delta_text.text.as_cursor()).into_command_list()?;
-            file.apply_in_place(&commands)?;
-
-            let mark = handler
-                .handle_revision(&file, next_num, delta, delta_text)
-                .await?;
-            log::trace!("{}: wrote {} to mark {:?}", disp, next_num, mark);
+            contents.apply_in_place(&commands)?;
+        } else {
+            contents = Some(File::new(delta_text.text.as_cursor())?);
         }
 
-        Ok(())
+        let revision_content = match contents.as_ref() {
+            Some(contents) => contents.as_bytes(),
+            None => {
+                anyhow::bail!("unexpected lack of contents")
+            }
+        };
+
+        let mark = handler
+            .handle_revision(&revision_content, revision, delta, delta_text)
+            .await?;
+        log::trace!("{}: wrote {} to mark {:?}", path.display(), revision, mark);
+
+        // If there are branches upwards from here, we need to also handle them.
+        for branch_revision in delta.branches.iter() {
+            // Note that we clone contents here: since we're modifying the contents in place each
+            // time a new revision is seen, we have to have a separate state for each branch.
+            handle_tree(handler, cv, path, contents.clone(), branch_revision).await?;
+        }
+
+        if let Some(next) = &delta.next {
+            revision = next;
+        } else {
+            return Ok(());
+        }
     }
 }
 
 /// Handles individual revisions of a single file.
 struct FileRevisionHandler<'a> {
     worker: &'a Worker,
+    branches: HashMap<Sym, Num>,
     revision_tags: HashMap<Num, Vec<Sym>>,
     real_path: &'a Path,
 }
@@ -208,7 +250,7 @@ impl FileRevisionHandler<'_> {
     /// Handles a single revision of a file.
     async fn handle_revision(
         &self,
-        file: &File,
+        content: &[u8],
         revision: &Num,
         delta: &Delta,
         delta_text: &DeltaText,
@@ -217,15 +259,23 @@ impl FileRevisionHandler<'_> {
         if let Ok(revision) = self
             .worker
             .state
-            .get_file_revision(self.real_path, revision)
+            .get_file_revision(self.real_path, revision.to_string().as_str())
             .await
         {
             return Ok(revision.mark.map(|mark| mark.into()));
         }
 
+        let branch_iter = self.branches.iter().filter_map(|(name, head)| {
+            if head.contains(revision).unwrap() {
+                Some(name)
+            } else {
+                None
+            }
+        });
+
         let mark = match &delta.state {
             Some(state) if state == b"dead".as_ref() => None,
-            _ => Some(self.worker.output.blob(Blob::new(&file.as_bytes())).await?),
+            _ => Some(self.worker.output.blob(Blob::new(content)).await?),
         };
 
         let id = self
@@ -234,7 +284,7 @@ impl FileRevisionHandler<'_> {
             .file_revision(
                 self.real_path,
                 revision,
-                &delta.branches,
+                branch_iter,
                 mark,
                 delta,
                 delta_text,

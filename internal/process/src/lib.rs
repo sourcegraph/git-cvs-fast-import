@@ -95,6 +95,13 @@ impl Output {
         Ok(rx.await?)
     }
 
+    pub async fn branch(&self, name: &str, head_mark: Mark) -> Result<(), Error> {
+        Ok(self.tx.send(Command::Reset {
+            branch_ref: format!("refs/heads/{}", name),
+            from: Some(head_mark),
+        })?)
+    }
+
     pub async fn commit(&self, commit: git_fast_import::Commit) -> Result<Mark, Error> {
         let (tx, rx) = oneshot::channel();
         self.tx.send(Command::Commit(commit, tx)).map_err(|e| {

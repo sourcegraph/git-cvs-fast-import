@@ -12,6 +12,7 @@ tokio-test = "0.4.2"
 
 [dependencies]
 anyhow = "1.0.45"
+async-recursion = "0.3.2"
 comma-v = { path = "comma-v" }
 flexi_logger = { version = "0.19.6", features = ["async", "colors"] }
 flume = "0.10.9"
