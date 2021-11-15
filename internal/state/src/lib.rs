@@ -1,6 +1,7 @@
 //! State management for `git-cvs-fast-import`.
 
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     path::Path,
     sync::Arc,
@@ -189,7 +190,17 @@ impl Manager {
     }
 
     pub async fn add_tag(&self, tag: &[u8], file_revision_id: file_revision::ID) {
-        self.tags.write().await.add(tag, file_revision_id)
+        self.tags.write().await.add_tag(tag, file_revision_id)
+    }
+
+    pub async fn add_tag_mark<I>(&self, tag: &[u8], mark: Mark, file_revision_ids: I)
+    where
+        I: Iterator<Item = file_revision::ID>,
+    {
+        self.tags
+            .write()
+            .await
+            .add_mark(tag, mark.into(), file_revision_ids)
     }
 
     pub async fn get_file_revision(
@@ -218,6 +229,40 @@ impl Manager {
 
     pub async fn get_last_patchset_mark_on_branch(&self, branch: &[u8]) -> Option<patchset::Mark> {
         self.patchsets.read().await.get_last_mark_on_branch(branch)
+    }
+
+    pub async fn get_mark_for_tag(&self, tag: &[u8]) -> Option<Mark> {
+        self.tags
+            .read()
+            .await
+            .get_mark(tag)
+            .map(|(mark, _)| (*mark).into())
+    }
+
+    pub async fn get_mark_for_tag_and_content<I>(
+        &self,
+        tag: &[u8],
+        file_revision_ids: I,
+    ) -> Option<Mark>
+    where
+        I: Iterator<Item = file_revision::ID>,
+    {
+        log::trace!("get mark: {:?}", self.tags.read().await.get_mark(tag));
+        match self.tags.read().await.get_mark(tag) {
+            Some((mark, mark_file_revision_ids)) => {
+                log::trace!("mark file revision IDs: {:?}", &mark_file_revision_ids);
+                for id in file_revision_ids {
+                    if !mark_file_revision_ids.contains(&id) {
+                        log::trace!("file revision ID {} is not found", id);
+                        return None;
+                    }
+                    log::trace!("file revision ID {} is found", id);
+                }
+
+                Some((*mark).into())
+            }
+            None => None,
+        }
     }
 
     pub async fn get_mark_from_patchset_content<I>(
@@ -353,7 +398,7 @@ pub struct TagFileRevisionIterator<'a> {
 }
 
 impl<'a> TagFileRevisionIterator<'a> {
-    pub fn iter(&self) -> Option<&Vec<file_revision::ID>> {
+    pub fn iter(&self) -> Option<&BTreeSet<file_revision::ID>> {
         self.guard.get_file_revisions(&self.tag)
     }
 }
