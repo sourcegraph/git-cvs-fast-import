@@ -136,6 +136,12 @@ impl Store {
         I: Iterator,
         I::Item: AsRef<[u8]>,
     {
+        // Short circuit: if this revision has already been seen, then we don't
+        // need to insert it again.
+        if let Some(id) = self.by_key.get(&key) {
+            return Ok(*id);
+        }
+
         let id = self.file_revisions.len().into();
 
         self.file_revisions.push(Arc::new(FileRevision {

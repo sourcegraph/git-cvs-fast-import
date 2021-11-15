@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::ErrorKind,
     path::PathBuf,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use discovery::Discovery;
@@ -316,6 +316,26 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
 
         let mut parent_patchset: Option<(Mark, SystemTime)> = None;
         let tag_str = String::from_utf8_lossy(tag).into_owned();
+        log::trace!("processing tag {}", &tag_str);
+
+        // Let's figure out if we already have a fake commit that matches our
+        // files. If so, there's nothing to do.
+        let file_revision_iter = state.get_file_revisions_for_tag(tag).await;
+        let file_revision_ids = match file_revision_iter.iter() {
+            Some(ids) => ids,
+            None => {
+                log::debug!("tag {} does not have any file revisions", &tag_str);
+                continue;
+            }
+        };
+        if let Some(_mark) = state
+            .get_mark_for_tag_and_content(tag, file_revision_ids.iter().copied())
+            .await
+        {
+            // All good; continue.
+            log::trace!("not changing tag {}, as content matches", &tag_str);
+            continue;
+        }
 
         let mut builder = CommitBuilder::new(format!("refs/heads/tags/{}", &tag_str));
         // TODO: allow the identity to be configured.
@@ -327,45 +347,63 @@ async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
         // then attach the new content that is known to be on the tag. This
         // means that Git will have to figure out what the diffs look like.
         builder.add_file_command(FileCommand::DeleteAll);
-        if let Some(file_revision_ids) = state.get_file_revisions_for_tag(tag).await.iter() {
-            for file_revision_id in file_revision_ids.iter() {
-                let file_revision = state.get_file_revision_by_id(*file_revision_id).await?;
+        let mut time = UNIX_EPOCH;
 
-                match file_revision.mark {
-                    Some(mark) => builder.add_file_command(FileCommand::Modify {
-                        mode: git_fast_import::Mode::Normal,
-                        mark: mark.into(),
-                        path: file_revision.key.path.clone(),
-                    }),
-                    None => builder.add_file_command(FileCommand::Delete {
-                        path: file_revision.key.path.clone(),
-                    }),
-                };
+        for file_revision_id in file_revision_ids.iter() {
+            let file_revision = state.get_file_revision_by_id(*file_revision_id).await?;
 
-                // Find out which patchset this file revision is in, if any, and
-                // check if it's newer than what we've seen.
-                if let Some((patchset_mark, patchset)) = state
-                    .get_last_patchset_for_file_revision(*file_revision_id)
-                    .await
-                {
-                    if let Some((mark, time)) = &parent_patchset {
-                        if time < &patchset.time {
-                            parent_patchset = Some((*mark, patchset.time));
-                        }
-                    } else {
-                        parent_patchset = Some((patchset_mark, patchset.time));
+            match file_revision.mark {
+                Some(mark) => builder.add_file_command(FileCommand::Modify {
+                    mode: git_fast_import::Mode::Normal,
+                    mark: mark.into(),
+                    path: file_revision.key.path.clone(),
+                }),
+                None => builder.add_file_command(FileCommand::Delete {
+                    path: file_revision.key.path.clone(),
+                }),
+            };
+
+            // Find out which patchset this file revision is in, if any, and
+            // check if it's newer than what we've seen.
+            if let Some((patchset_mark, patchset)) = state
+                .get_last_patchset_for_file_revision(*file_revision_id)
+                .await
+            {
+                if let Some((mark, parent_time)) = &parent_patchset {
+                    if parent_time < &patchset.time {
+                        time = *parent_time;
+                        parent_patchset = Some((*mark, patchset.time));
                     }
+                } else {
+                    time = patchset.time;
+                    parent_patchset = Some((patchset_mark, patchset.time));
                 }
             }
         }
 
         // Set the parent commit, if any.
-        if let Some((from, _)) = parent_patchset {
+        if let Some(mark) = state.get_mark_for_tag(tag).await {
+            log::trace!(
+                "tag {} is parented on previous tag commit {}",
+                &tag_str,
+                mark
+            );
+            builder.from(mark);
+        } else if let Some((from, _)) = parent_patchset {
+            log::trace!("tag {} is parented on parent commit {}", &tag_str, from);
             builder.from(from);
+        } else {
+            log::trace!("tag {} does not have a parent", &tag_str);
         }
 
         // Now we can send the commit.
         let mark = output.commit(builder.build()?).await?;
+        state
+            .add_patchset(mark, tag, &time, file_revision_ids.iter().copied())
+            .await;
+        state
+            .add_tag_mark(tag, mark, file_revision_ids.iter().copied())
+            .await;
 
         // And we can tag the commit.
         output.lightweight_tag(&tag_str, mark).await?;
