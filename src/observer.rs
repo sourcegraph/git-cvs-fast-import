@@ -145,11 +145,13 @@ impl Observer {
     }
 }
 
+type BranchDetectorHashMap = HashMap<Vec<u8>, Detector<FileRevisionID>>;
+
 /// The `Collector` is used to wait for all file revisions to be observed, and
 /// then can be used to access the observation result.
 #[derive(Debug)]
 pub(crate) struct Collector {
-    join_handle: JoinHandle<Result<HashMap<Vec<u8>, Detector<FileRevisionID>>, Error>>,
+    join_handle: JoinHandle<Result<BranchDetectorHashMap, Error>>,
 }
 
 /// An object that can be joined to wait for the results of the [`Observer`].
