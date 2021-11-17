@@ -193,14 +193,8 @@ impl Manager {
         self.tags.write().await.add_tag(tag, file_revision_id)
     }
 
-    pub async fn add_tag_mark<I>(&self, tag: &[u8], mark: Mark, file_revision_ids: I)
-    where
-        I: Iterator<Item = file_revision::ID>,
-    {
-        self.tags
-            .write()
-            .await
-            .add_mark(tag, mark.into(), file_revision_ids)
+    pub async fn add_tag_mark(&self, tag: &[u8], mark: Mark) {
+        self.tags.write().await.add_mark(tag, mark.into())
     }
 
     pub async fn get_file_revision(
@@ -232,37 +226,7 @@ impl Manager {
     }
 
     pub async fn get_mark_for_tag(&self, tag: &[u8]) -> Option<Mark> {
-        self.tags
-            .read()
-            .await
-            .get_mark(tag)
-            .map(|(mark, _)| (*mark).into())
-    }
-
-    pub async fn get_mark_for_tag_and_content<I>(
-        &self,
-        tag: &[u8],
-        file_revision_ids: I,
-    ) -> Option<Mark>
-    where
-        I: Iterator<Item = file_revision::ID>,
-    {
-        log::trace!("get mark: {:?}", self.tags.read().await.get_mark(tag));
-        match self.tags.read().await.get_mark(tag) {
-            Some((mark, mark_file_revision_ids)) => {
-                log::trace!("mark file revision IDs: {:?}", &mark_file_revision_ids);
-                for id in file_revision_ids {
-                    if !mark_file_revision_ids.contains(&id) {
-                        log::trace!("file revision ID {} is not found", id);
-                        return None;
-                    }
-                    log::trace!("file revision ID {} is found", id);
-                }
-
-                Some((*mark).into())
-            }
-            None => None,
-        }
+        self.tags.read().await.get_mark(tag).map(|mark| mark.into())
     }
 
     pub async fn get_mark_from_patchset_content<I>(
