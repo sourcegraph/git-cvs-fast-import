@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use crate::{file_revision, patchset::Mark};
+use crate::{file_revision, patchset::Mark, v1};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -34,5 +34,18 @@ impl Store {
 
     pub(crate) fn get_tags(&self) -> impl Iterator<Item = &[u8]> {
         self.tags.keys().map(|key| key.as_slice())
+    }
+}
+
+impl From<v1::tag::Store> for Store {
+    fn from(v1: v1::tag::Store) -> Self {
+        Self {
+            marks: HashMap::new(),
+            tags: v1
+                .tags
+                .into_iter()
+                .map(|(tag, file_revision_ids)| (tag, file_revision_ids.into_iter().collect()))
+                .collect(),
+        }
     }
 }

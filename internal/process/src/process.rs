@@ -17,12 +17,19 @@ pub struct Process {
 impl Process {
     pub(crate) fn new(opt: Opt) -> Result<Self, Error> {
         // Create the git fast-import process.
+        //
+        // We pass --force to allow tags and branches to be shifted without
+        // necessarily being parented on their previous commit: this isn't used
+        // in normal use, but v1 stores don't have the metadata required to
+        // safely shift tag heads, so we need to be able to force push in that
+        // case.
         let mut child = std::process::Command::new(opt.git_command)
             .arg("-C")
             .arg(opt.git_repo)
             .args(opt.git_global_option.iter())
             .arg("fast-import")
             .arg("--allow-unsafe-features")
+            .arg("--force")
             .args(opt.git_fast_import_option.iter())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

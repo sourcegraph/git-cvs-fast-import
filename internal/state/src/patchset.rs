@@ -7,7 +7,7 @@ use std::{
 use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
 
-use crate::file_revision;
+use crate::{file_revision, v1};
 
 #[derive(
     Debug, Display, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, From, Into,
@@ -93,6 +93,33 @@ impl Store {
             .get(branch)
             .map(|marks| marks.last().copied())
             .flatten()
+    }
+}
+
+impl From<v1::patchset::Store> for Store {
+    fn from(v1: v1::patchset::Store) -> Self {
+        let mut v2 = Self {
+            patchsets: BTreeMap::new(),
+            by_file_revision: v1.by_file_revision,
+            by_branch: v1.by_branch,
+            by_content: HashMap::new(),
+        };
+
+        for (mark, v1_patchset) in v1.patchsets.into_iter() {
+            // This should never fail, since we're consuming the v1 patchset
+            // store.
+            let v1_patchset = Arc::try_unwrap(v1_patchset).unwrap();
+
+            let v2_patchset = Arc::new(PatchSet {
+                time: v1_patchset.time,
+                file_revisions: v1_patchset.file_revisions.into_iter().collect(),
+            });
+
+            v2.patchsets.insert(mark, v2_patchset.clone());
+            v2.by_content.insert(v2_patchset, mark);
+        }
+
+        v2
     }
 }
 

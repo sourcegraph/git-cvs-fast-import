@@ -10,7 +10,7 @@ use std::{
 use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
 
-use crate::Error;
+use crate::{v1, Error};
 
 #[derive(
     Debug,
@@ -170,5 +170,42 @@ impl Store {
             .get((path, revision).borrow() as &dyn Keyer)
             .map(|id| self.get_by_id(*id))
             .flatten()
+    }
+}
+
+impl From<v1::file_revision::Store> for Store {
+    fn from(v1: v1::file_revision::Store) -> Self {
+        let mut v2 = Store {
+            file_revisions: Vec::new(),
+            by_key: HashMap::new(),
+            by_mark: BTreeMap::new(),
+        };
+
+        for v1_file_revision in v1.file_revisions.into_iter() {
+            let v1_file_revision = Arc::try_unwrap(v1_file_revision).unwrap();
+
+            let v2_key = Key {
+                path: v1_file_revision.key.path.into(),
+                revision: String::from_utf8_lossy(&v1_file_revision.key.revision).into_owned(),
+            };
+
+            let v2_file_revision = Arc::new(FileRevision {
+                key: v2_key.clone(),
+                mark: v1_file_revision.mark,
+                branches: v1_file_revision.branches,
+                author: v1_file_revision.author,
+                message: v1_file_revision.message,
+                time: v1_file_revision.time,
+            });
+
+            let id = v2.file_revisions.len().into();
+            v2.file_revisions.push(v2_file_revision);
+            v2.by_key.insert(v2_key, id);
+            if let Some(mark) = v1_file_revision.mark {
+                v2.by_mark.insert(mark, id);
+            }
+        }
+
+        v2
     }
 }

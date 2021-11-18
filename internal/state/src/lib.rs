@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeSet,
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::Path,
     sync::Arc,
     time::SystemTime,
@@ -26,6 +26,8 @@ mod patchset;
 pub use patchset::PatchSet;
 
 mod tag;
+
+mod v1;
 
 /// The top level in-memory state manager.
 #[derive(Debug, Clone, Default)]
@@ -58,15 +60,26 @@ impl Manager {
     }
 
     /// Read the state from disk.
-    pub async fn deserialize_from<R>(reader: R) -> Result<Self, Error>
+    pub async fn deserialize_from<R>(mut reader: R) -> Result<Self, Error>
     where
-        R: Read,
+        R: Read + Seek,
     {
+        // Version 0.1.0 used bincode for the top level serialisation, whereas
+        // later versions use speedy. We can just grab the first byte to figure
+        // out what format we're dealing with.
+        let mut buffer = [0; 1];
+        reader.read_exact(&mut buffer)?;
+        reader.rewind()?;
+        if buffer[0] == 1 {
+            log::info!("detected v1 state store; migrating to v2");
+            return v1::deserialize_from(reader).await;
+        }
+
         log::debug!("reading from speedy");
         let ser = Ser::read_from_stream_buffered(zstd::Decoder::new(reader)?)?;
         log::debug!("reading from speedy complete");
 
-        if ser.version != 1 {
+        if ser.version != 2 {
             return Err(Error::UnknownSerialisationVersion(ser.version));
         }
 
@@ -122,7 +135,7 @@ impl Manager {
         log::debug!("serialisation complete");
 
         let ser = Ser {
-            version: 1,
+            version: 2,
             file_revisions: file_revisions?,
             patchsets: patchsets?,
             tags: tags?,
