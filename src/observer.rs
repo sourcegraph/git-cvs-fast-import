@@ -66,7 +66,7 @@ impl Observer {
                 let id = task_state
                     .add_file_revision(
                         msg.file_revision.path.as_path(),
-                        &msg.file_revision.revision.to_string(),
+                        &msg.file_revision.revision,
                         msg.file_revision.mark,
                         msg.file_revision.branches.iter(),
                         &msg.file_revision.author,
