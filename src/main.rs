@@ -86,6 +86,19 @@ struct Opt {
     store: PathBuf,
 
     #[structopt(
+        long,
+        default_value = "git-cvs-fast-import",
+        help = "e-mail to use when creating fake commits for tags"
+    )]
+    tag_identity_email: String,
+
+    #[structopt(
+        long,
+        help = "optional name to use when creating fake commits for tags"
+    )]
+    tag_identity_name: Option<String>,
+
+    #[structopt(
         name = "DIRECTORY",
         parse(from_os_str),
         help = "the top level directories to import from the CVSROOT; if omitted, all directories will be imported"
@@ -144,7 +157,13 @@ async fn main() -> anyhow::Result<()> {
     }
     log::info!("patchsets sent; sending tags");
 
-    send_tags(&state, &output).await?;
+    // Send up our tags.
+    let identity = Identity::new(
+        opt.tag_identity_name,
+        opt.tag_identity_email,
+        SystemTime::now(),
+    )?;
+    send_tags(&state, &output, identity).await?;
     log::info!("tags sent");
 
     // We need to ensure all references to output are dropped before the output
@@ -322,10 +341,7 @@ where
 }
 
 /// Send tags to git-fast-import.
-async fn send_tags(state: &Manager, output: &Output) -> anyhow::Result<()> {
-    // TODO: allow the identity to be configured.
-    let identity = Identity::new(None, "git-cvs-fast-import".into(), SystemTime::now())?;
-
+async fn send_tags(state: &Manager, output: &Output, identity: Identity) -> anyhow::Result<()> {
     // We have to operate on a clone of the tag names, as keeping the iterator
     // alive would keep a read lock on the tag state.
     let tags: Vec<Vec<u8>> = state
