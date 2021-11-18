@@ -62,9 +62,9 @@ impl Manager {
     where
         R: Read,
     {
-        log::warn!("reading from speedy");
+        log::debug!("reading from speedy");
         let ser = Ser::read_from_stream_buffered(zstd::Decoder::new(reader)?)?;
-        log::warn!("reading from speedy complete");
+        log::debug!("reading from speedy complete");
 
         if ser.version != 1 {
             return Err(Error::UnknownSerialisationVersion(ser.version));
@@ -75,7 +75,7 @@ impl Manager {
         let tags = ser.tags;
         let raw_marks = ser.raw_marks;
 
-        log::warn!("starting deserialisation");
+        log::debug!("starting deserialisation");
         // We'll parallelise the individual data structure deserialisations,
         // since CPU is generally the blocker here.
         let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
@@ -85,7 +85,7 @@ impl Manager {
             task::spawn(async move { bincode::deserialize(&raw_marks) }),
         )
         .unwrap();
-        log::warn!("deserialisation complete");
+        log::debug!("deserialisation complete");
 
         Ok(Self {
             file_revisions: Arc::new(RwLock::new(file_revisions?)),
@@ -105,7 +105,7 @@ impl Manager {
         let tags = self.tags.clone();
         let raw_marks = self.raw_marks.clone();
 
-        log::warn!("starting serialisation");
+        log::debug!("starting serialisation");
         // We'll parallelise the individual data structure serialisations, since
         // CPU is generally the blocker here.
         //
@@ -119,7 +119,7 @@ impl Manager {
             task::spawn(async move { bincode::serialize(&*raw_marks.read().await) }),
         )
         .unwrap();
-        log::warn!("serialisation complete");
+        log::debug!("serialisation complete");
 
         let ser = Ser {
             version: 1,
@@ -129,13 +129,13 @@ impl Manager {
             raw_marks: raw_marks?,
         };
 
-        log::warn!("writing to speedy");
+        log::debug!("writing to speedy");
         {
             let mut zstd_writer = zstd::Encoder::new(writer, 0)?;
             ser.write_to_stream(&mut zstd_writer)?;
             zstd_writer.finish()?;
         }
-        log::warn!("writing to speedy complete");
+        log::debug!("writing to speedy complete");
         Ok(())
     }
 
