@@ -44,6 +44,7 @@ impl Discovery {
         state: &Manager,
         output: &Output,
         observer: &Observer,
+        head_branch: &str,
         ignore_errors: bool,
         jobs: usize,
         prefix: &Path,
@@ -54,7 +55,15 @@ impl Discovery {
 
         // Start each worker.
         for _i in 0..jobs {
-            let worker = Worker::new(&rx, observer, output, prefix, state, ignore_errors);
+            let worker = Worker::new(
+                &rx,
+                observer,
+                output,
+                prefix,
+                state,
+                head_branch,
+                ignore_errors,
+            );
             task::spawn(async move { worker.work().await });
         }
 
@@ -74,6 +83,7 @@ struct Worker {
     prefix: PathBuf,
     rx: Receiver<PathBuf>,
     state: Manager,
+    head_branch: Vec<u8>,
     ignore_errors: bool,
 }
 
@@ -85,6 +95,7 @@ impl Worker {
         output: &Output,
         prefix: &Path,
         state: &Manager,
+        head_branch: &str,
         ignore_errors: bool,
     ) -> Self {
         Self {
@@ -93,6 +104,7 @@ impl Worker {
             prefix: prefix.to_path_buf(),
             rx: rx.clone(),
             state: state.clone(),
+            head_branch: head_branch.as_bytes().into(),
             ignore_errors,
         }
     }
@@ -147,9 +159,10 @@ impl Worker {
         // Calculate the real path of the file in the repository.
         let real_path = munge_raw_path(path, &self.prefix);
 
-        // Tags are defined as symbols in the RCS admin area, so we have them up
-        // front rather than as we parse each revision. Let's set up a revision
-        // -> tags map that we can use to send tags as we send revisions.
+        // Branches and tags are defined as symbols in the RCS admin area, so we
+        // have them up front rather than as we parse each revision. Let's set
+        // up a revision -> tags map that we can use to send tags as we send
+        // revisions, along with a branch -> head revision map for branches.
         let mut branches: HashMap<Sym, Num> = HashMap::new();
         let mut revision_tags: HashMap<Num, Vec<Sym>> = HashMap::new();
         for (tag, revision) in cv.admin.symbols.iter() {
@@ -165,9 +178,10 @@ impl Worker {
                 }
             }
         }
+
+        // We also need to include the HEAD branch.
         if let Some(ref head) = cv.admin.head {
-            // TODO: don't hard code "main" as the HEAD branch name.
-            branches.insert(Sym::from(b"main".to_vec()), head.to_branch());
+            branches.insert(Sym::from(self.head_branch.clone()), head.to_branch());
         }
 
         // Set up the file revision handler.

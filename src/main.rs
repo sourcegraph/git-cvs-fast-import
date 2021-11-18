@@ -54,6 +54,13 @@ struct Opt {
     )]
     delta: Duration,
 
+    #[structopt(
+        long,
+        default_value = "main",
+        help = "what to name the default HEAD branch"
+    )]
+    head_branch: String,
+
     #[structopt(long, help = "treat file discovery and parsing errors as non-fatal")]
     ignore_file_errors: bool,
 
@@ -179,6 +186,7 @@ fn discover_files(state: &Manager, output: &Output, opt: &Opt) -> Result<Collect
         state,
         output,
         &observer,
+        &opt.head_branch,
         opt.ignore_file_errors,
         opt.jobs.unwrap_or_else(num_cpus::get),
         &opt.cvsroot,
