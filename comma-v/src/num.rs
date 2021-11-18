@@ -4,6 +4,14 @@ use itertools::Itertools;
 
 use crate::Error;
 
+/// A number within a ,v file: this is generally a sequence of dotted, positive
+/// integers, such as `1.1` or `1.1.2.2.2.1`.
+///
+/// Note that these come in two closely related variants: branches, which have
+/// an odd number of elements, and commits, which have an even number. A branch
+/// can (and usually does) contain many commits. As an added complication,
+/// branches sometimes appear with an even number of elements when used in CVS,
+/// but with the penultimate element set to 0.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Num {
     Branch(Vec<u64>),
@@ -11,29 +19,15 @@ pub enum Num {
 }
 
 impl Num {
+    /// Checks if the current branch contains the given commit. This generally
+    /// implies that the commit was on an ancestral branch, or is on the exact
+    /// same branch.
+    ///
+    /// `Error::InvalidTypesForContains` is returned if `self` is not a branch
+    /// or `other` is not a commit.
     pub fn contains(&self, other: &Num) -> Result<bool, Error> {
         if let Num::Branch(branch) = self {
             if let Num::Commit(other) = other {
-                // for (prefix, max) in prefixes.iter() {
-                //     if other.len() < prefix.len() {
-                //         // This means that we're looking at a commit from before
-                //         // this branch was branched, but since we know the
-                //         // previous checks passed, that means the commit must be
-                //         // part of this branch.
-                //         return Ok(true);
-                //     }
-                //     if &other[0..prefix.len()] != prefix.as_slice() {
-                //         return Ok(false);
-                //     }
-                //     if let Some(max) = max {
-                //         if other[prefix.len()] > *max {
-                //             return Ok(false);
-                //         }
-                //     }
-                // }
-
-                // return Ok(true);
-
                 if other.len() > (branch.len() + 1) {
                     // Commit is deeper, and therefore cannot be on this branch.
                     return Ok(false);
@@ -56,11 +50,11 @@ impl Num {
                             // This would imply the commit isn't really a
                             // commit, since it has an odd number of entries,
                             // and there's nothing sensible to be done.
-                            return Err(Error::NotBranch);
+                            return Err(Error::InvalidTypesForContains);
                         }
                     } else {
-                        // We're done; previous branches matched, and the
-                        // revision isn't as deep.
+                        // We're done; previous branches matched, and the commit
+                        // is shallower than the branch we're matching against.
                         return Ok(true);
                     }
                 }
@@ -76,7 +70,7 @@ impl Num {
             }
         }
 
-        Err(Error::NotBranch)
+        Err(Error::InvalidTypesForContains)
     }
 
     pub fn to_branch(&self) -> Self {
@@ -127,6 +121,9 @@ impl Display for Num {
     }
 }
 
+// This rule is disabled because we currently use `intersperse` from itertools,
+// but this is going to be added to Rust proper at some point and rustc is
+// already warning about it.
 #[allow(unstable_name_collisions)]
 fn fmt_u64_slice(f: &mut std::fmt::Formatter, input: &[u64]) -> std::fmt::Result {
     write!(
@@ -145,38 +142,41 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_num_contains() {
+    fn test_num_contains() -> anyhow::Result<()> {
         // Contained because it's on this specific branch.
-        assert!(num("1.1.2").contains(&num("1.1.2.1")).unwrap());
-        assert!(num("1.1.2").contains(&num("1.1.2.2")).unwrap());
+        assert!(num("1.1.2").contains(&num("1.1.2.1"))?);
+        assert!(num("1.1.2").contains(&num("1.1.2.2"))?);
 
         // Contained because it's an ancestor of this branch.
-        assert!(num("1.1.2").contains(&num("1.1")).unwrap());
+        assert!(num("1.1.2").contains(&num("1.1"))?);
 
         // Not contained because it's on a different branch.
-        assert!(!num("1.1.2").contains(&num("1.1.3.1")).unwrap());
+        assert!(!num("1.1.2").contains(&num("1.1.3.1"))?);
 
         // Not contained because it's only on a descendant branch.
-        assert!(!num("1.1.2").contains(&num("1.1.2.1.1.1")).unwrap());
+        assert!(!num("1.1.2").contains(&num("1.1.2.1.1.1"))?);
 
         // Not contained because it's after the branch was made.
-        assert!(!num("1.1.2").contains(&num("1.2")).unwrap());
+        assert!(!num("1.1.2").contains(&num("1.2"))?);
+
+        Ok(())
     }
 
     #[test]
-    fn test_num_parse() {
-        assert_eq!(Num::from_str("1.1").unwrap(), Num::Commit(vec![1, 1]));
-        assert_eq!(
-            Num::from_str("1.2.3.4").unwrap(),
-            Num::Commit(vec![1, 2, 3, 4])
-        );
+    fn test_num_parse() -> anyhow::Result<()> {
+        assert_eq!(num("1.1"), Num::Commit(vec![1, 1]));
+        assert_eq!(num("1.2.3.4"), Num::Commit(vec![1, 2, 3, 4]));
 
-        assert_eq!(Num::from_str("1.2.3").unwrap(), Num::Branch(vec![1, 2, 3]),);
+        assert_eq!(num("1.2.3"), Num::Branch(vec![1, 2, 3]),);
 
-        assert_eq!(
-            Num::from_str("1.2.0.3").unwrap(),
-            Num::Branch(vec![1, 2, 3])
-        );
+        assert_eq!(num("1.2.0.3"), Num::Branch(vec![1, 2, 3]));
+
+        // Now the failures.
+        for input in ["", "x", "1.", "1.x"] {
+            assert!(Num::from_str(input).is_err());
+        }
+
+        Ok(())
     }
 
     fn num(s: &str) -> Num {
