@@ -130,17 +130,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() {
-        assert_eq!(*integrity_string(b"@@").unwrap().1, b"");
-        assert_eq!(*integrity_string(b"@foo@").unwrap().1, b"foo");
-        assert_eq!(*integrity_string(b"@foo\x0cbar@").unwrap().1, b"foo\x0cbar");
+    fn test() -> anyhow::Result<()> {
+        assert_eq!(*integrity_string(b"@@")?.1, b"");
+        assert_eq!(*integrity_string(b"@foo@")?.1, b"foo");
+        assert_eq!(*integrity_string(b"@foo\x0cbar@")?.1, b"foo\x0cbar");
 
-        assert_eq!(string(b"@foo bar@").unwrap().1 .0, b"foo bar");
-        assert_eq!(string(b"@foo@@bar@").unwrap().1 .0, b"foo@bar");
+        assert_eq!(string(b"@foo bar@")?.1 .0, b"foo bar");
+        assert_eq!(string(b"@foo@@bar@")?.1 .0, b"foo@bar");
+
+        Ok(())
     }
 
     #[test]
-    fn test_date() {
+    fn test_date() -> anyhow::Result<()> {
         // Straight up parse errors.
         assert_parse_error(b"", date);
         assert_parse_error(b"not.a.digit.oh.my.word", date);
@@ -157,17 +159,15 @@ mod tests {
 
         // Actually valid inputs.
         assert_eq!(
-            date(b"2021.08.11.19.08.27").unwrap().1,
-            DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")
-                .unwrap()
-                .into(),
+            date(b"2021.08.11.19.08.27")?.1,
+            DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")?.into(),
         );
         assert_eq!(
-            date(b"98.08.11.19.08.27").unwrap().1,
-            DateTime::parse_from_rfc3339("1998-08-11T19:08:27+00:00")
-                .unwrap()
-                .into(),
+            date(b"98.08.11.19.08.27")?.1,
+            DateTime::parse_from_rfc3339("1998-08-11T19:08:27+00:00")?.into(),
         );
+
+        Ok(())
     }
 
     fn assert_parse_error<F, T>(input: &[u8], f: F)

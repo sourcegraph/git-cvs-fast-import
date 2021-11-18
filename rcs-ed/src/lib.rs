@@ -174,52 +174,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_apply() {
+    fn test_apply() -> anyhow::Result<()> {
         assert_eq!(
-            File::new(include_bytes!("fixtures/lao").as_ref())
-                .unwrap()
+            File::new(include_bytes!("fixtures/lao").as_ref())?
                 .apply(
                     &Script::parse(include_bytes!("fixtures/script.ed").as_ref())
-                        .into_command_list()
-                        .unwrap()
-                )
-                .unwrap()
+                        .into_command_list()?
+                )?
                 .join(&b'\n'),
             include_bytes!("fixtures/tzu")
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_apply_in_place() {
-        let mut file = File::new(include_bytes!("fixtures/lao").as_ref()).unwrap();
+    fn test_apply_in_place() -> anyhow::Result<()> {
+        let mut file = File::new(include_bytes!("fixtures/lao").as_ref())?;
 
         file.apply_in_place(
-            &Script::parse(include_bytes!("fixtures/script.ed").as_ref())
-                .into_command_list()
-                .unwrap(),
-        )
-        .unwrap();
+            &Script::parse(include_bytes!("fixtures/script.ed").as_ref()).into_command_list()?,
+        )?;
 
         assert_eq!(file.into_bytes(), include_bytes!("fixtures/tzu"));
+
+        Ok(())
     }
 
     #[test]
-    fn test_add_first_line() {
-        let mut file = File::new(include_bytes!("fixtures/a0/1.15").as_ref()).unwrap();
+    fn test_add_first_line() -> anyhow::Result<()> {
+        let mut file = File::new(include_bytes!("fixtures/a0/1.15").as_ref())?;
 
         for i in (1..15).rev() {
             // Read and apply the script.
             file.apply_in_place(
-                &Script::parse(fs::File::open(fixture_path(format!("a0/1.{}.ed", i))).unwrap())
-                    .into_command_list()
-                    .unwrap(),
-            )
-            .unwrap();
+                &Script::parse(fs::File::open(fixture_path(format!("a0/1.{}.ed", i)))?)
+                    .into_command_list()?,
+            )?;
 
             // Compare to the expected output.
-            let expected = fs::read(fixture_path(format!("a0/1.{}", i))).unwrap();
+            let expected = fs::read(fixture_path(format!("a0/1.{}", i)))?;
             assert_eq!(&file.as_bytes(), &expected);
         }
+
+        Ok(())
     }
 
     // We can't always hardcode the path for fixtures, so this will resolve them

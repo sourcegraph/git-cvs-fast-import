@@ -202,8 +202,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_admin() {
-        let have = admin(include_bytes!("fixtures/admin/input")).unwrap().1;
+    fn test_admin() -> anyhow::Result<()> {
+        let have = admin(include_bytes!("fixtures/admin/input"))?.1;
         assert_eq!(have.head.unwrap().to_string(), "1.1");
         assert!(have.branch.is_none());
         assert_eq!(have.access.len(), 0);
@@ -213,69 +213,65 @@ mod tests {
         assert!(have.integrity.is_none());
         assert_eq!(*have.comment.unwrap(), b"# ");
         assert!(have.expand.is_none());
+
+        Ok(())
     }
 
     #[test]
-    fn test_delta() {
-        let (num, have) = delta(include_bytes!("fixtures/delta/input")).unwrap().1;
+    fn test_delta() -> anyhow::Result<()> {
+        let (num, have) = delta(include_bytes!("fixtures/delta/input"))?.1;
         assert_eq!(num.to_string(), "1.2");
         assert_eq!(
             have.date,
-            DateTime::parse_from_rfc3339("2021-08-20T17:34:26+00:00")
-                .unwrap()
-                .into(),
+            DateTime::parse_from_rfc3339("2021-08-20T17:34:26+00:00")?.into(),
         );
         assert_eq!(*have.author, b"adam");
         assert_eq!(*have.state.unwrap(), b"Exp");
         assert_eq!(
             have.branches,
-            vec![
-                Num::from_str("1.2.2.1").unwrap(),
-                Num::from_str("1.2.4.1").unwrap()
-            ]
+            vec![Num::from_str("1.2.2.1")?, Num::from_str("1.2.4.1")?]
         );
         assert_eq!(have.next.unwrap().to_string(), "1.1");
         assert!(have.commit_id.is_none());
+
+        Ok(())
     }
 
     #[test]
-    fn test_delta_text() {
-        let (num, have) = delta_text(include_bytes!("fixtures/delta_text/input"))
-            .unwrap()
-            .1;
+    fn test_delta_text() -> anyhow::Result<()> {
+        let (num, have) = delta_text(include_bytes!("fixtures/delta_text/input"))?.1;
         assert_eq!(num.to_string(), "1.1");
         assert_eq!(*have.log, include_bytes!("fixtures/delta_text/log"),);
         assert_eq!(*have.text, include_bytes!("fixtures/delta_text/text"),);
 
-        let (num, have) = delta_text(b"1.2 log @@ text @@").unwrap().1;
+        let (num, have) = delta_text(b"1.2 log @@ text @@")?.1;
         assert_eq!(num.to_string(), "1.2");
         assert_eq!(*have.log, b"");
         assert_eq!(*have.text, b"");
+
+        Ok(())
     }
 
     #[test]
-    fn test_desc() {
-        assert_eq!(*desc(b"desc @@").unwrap().1, b"");
-        assert_eq!(*desc(b"desc @foo@@bar@").unwrap().1, b"foo@bar");
-        assert_eq!(*desc(b"desc   @foo@@bar@").unwrap().1, b"foo@bar");
+    fn test_desc() -> anyhow::Result<()> {
+        assert_eq!(*desc(b"desc @@")?.1, b"");
+        assert_eq!(*desc(b"desc @foo@@bar@")?.1, b"foo@bar");
+        assert_eq!(*desc(b"desc   @foo@@bar@")?.1, b"foo@bar");
+
+        Ok(())
     }
 
     #[test]
-    fn test_file() {
-        let have = file(include_bytes!("fixtures/file/input")).unwrap().1;
+    fn test_file() -> anyhow::Result<()> {
+        let have = file(include_bytes!("fixtures/file/input"))?.1;
 
         // We'll just spot check.
         assert_eq!(have.admin.head.unwrap().to_string(), "1.4");
 
         assert_eq!(have.delta.len(), 4);
         assert_eq!(
-            have.delta
-                .get(&num::Num::from_str("1.4").unwrap())
-                .unwrap()
-                .date,
-            DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")
-                .unwrap()
-                .into(),
+            have.delta.get(&num::Num::from_str("1.4")?).unwrap().date,
+            DateTime::parse_from_rfc3339("2021-08-11T19:08:27+00:00")?.into(),
         );
 
         assert_eq!(*have.desc, b"");
@@ -284,10 +280,12 @@ mod tests {
         assert_eq!(
             *have
                 .delta_text
-                .get(&num::Num::from_str("1.1").unwrap())
+                .get(&num::Num::from_str("1.1")?)
                 .unwrap()
                 .text,
             b"d5 3\n"
         );
+
+        Ok(())
     }
 }
