@@ -22,6 +22,8 @@ Full help is available through `git-cvs-fast-import --help`, but for most uses, 
 git-cvs-fast-import -c /cvs -g /git -s /tmp/import.db project src
 ```
 
+By default, all branches will be imported, but this can be controlled by only specifying the branches of interest with `--branch`.
+
 ## Comparison to other tools
 
 We know of three other tools that allow for CVS-to-Git conversion:
@@ -34,7 +36,6 @@ We would suggest trying `cvs-fast-export` first for one-time conversions where t
 
 ## Known issues
 
-* Importing branches other than `HEAD` is currently unsupported, but is intended to be added in the medium term.
 * Tag history can be misleading: CVS tags are applied on a per-file basis, whereas Git tags are per-repository. As a result, `git-cvs-fast-import` makes a fake commit for each tag: this ensures that the actual content of the tag is correct, but may be misleading in terms of the history of the tag if the same CVS tag was applied to different files at different times, as commits may appear in the Git log that weren't logically part of the CVS history for a specific file.
 
 ## Development
