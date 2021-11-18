@@ -1,6 +1,8 @@
 use std::{
+    ffi::OsString,
     fs::File,
     io::ErrorKind,
+    os::unix::prelude::OsStrExt,
     path::PathBuf,
     time::{Duration, SystemTime},
 };
@@ -18,6 +20,9 @@ use tempfile::NamedTempFile;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 use walkdir::WalkDir;
 
+use crate::branch::BranchFilter;
+
+mod branch;
 mod discovery;
 mod observer;
 mod tag;
@@ -25,6 +30,12 @@ mod tag;
 #[derive(Debug, StructOpt)]
 #[structopt(about = "A Git importer for CVS repositories.")]
 struct Opt {
+    #[structopt(
+        long,
+        help = "branches to include; if no branches are specified, all branches will be imported"
+    )]
+    branch: Vec<OsString>,
+
     #[structopt(
         short,
         long,
@@ -117,10 +128,14 @@ async fn main() -> anyhow::Result<()> {
     let result = collector.join().await?;
     log::info!("file parsing complete; sending patchsets");
 
-    for (branch, patchsets) in result.branch_iter() {
+    let branch_filter = BranchFilter::new(opt.branch.iter().map(|branch| branch.as_bytes()));
+    for (branch, patchsets) in result
+        .branch_iter()
+        .filter(|(branch, _patchsets)| branch_filter.contains(branch))
+    {
         send_patchsets(&state, &output, branch, patchsets.iter()).await?;
     }
-    log::info!("main patchsets sent; sending tags");
+    log::info!("patchsets sent; sending tags");
 
     send_tags(&state, &output).await?;
     log::info!("tags sent");
