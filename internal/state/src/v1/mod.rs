@@ -36,20 +36,24 @@ where
     let tags = ser.tags;
     let raw_marks = ser.raw_marks;
 
-    // Note that we deserialise into the v1 data types here.
+    // Note that we deserialise into the v1 data types here, then use into() to
+    // convert them into their v2 form in parallel.
     let (file_revisions, patchsets, tags, raw_marks) = tokio::try_join!(
-        task::spawn(async move { bincode::deserialize::<file_revision::Store>(&file_revisions) }),
-        task::spawn(async move { bincode::deserialize::<patchset::Store>(&patchsets) }),
-        task::spawn(async move { bincode::deserialize::<tag::Store>(&tags) }),
+        task::spawn(async move {
+            bincode::deserialize::<file_revision::Store>(&file_revisions).map(|v1| v1.into())
+        }),
+        task::spawn(async move {
+            bincode::deserialize::<patchset::Store>(&patchsets).map(|v1| v1.into())
+        }),
+        task::spawn(async move { bincode::deserialize::<tag::Store>(&tags).map(|v1| v1.into()) }),
         task::spawn(async move { bincode::deserialize(&raw_marks) }),
     )
     .unwrap();
 
-    // Now we can use .into() to convert the v1 data types to v2.
     Ok(Manager {
-        file_revisions: Arc::new(RwLock::new(file_revisions?.into())),
-        patchsets: Arc::new(RwLock::new(patchsets?.into())),
-        tags: Arc::new(RwLock::new(tags?.into())),
+        file_revisions: Arc::new(RwLock::new(file_revisions?)),
+        patchsets: Arc::new(RwLock::new(patchsets?)),
+        tags: Arc::new(RwLock::new(tags?)),
         raw_marks: Arc::new(RwLock::new(raw_marks?)),
     })
 }
