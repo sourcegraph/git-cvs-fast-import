@@ -7,7 +7,7 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-derive_more = "0.99.16"
+derive_more = "0.99.17"
 nom = "7.1.0"
 rev_lines = "0.2.1"
 serde = "1.0.130"
