@@ -1,4 +1,4 @@
-FROM rust:1.56.1-alpine@sha256:8dc667e247d933bb933b45eeaf0e3e97982b77ed91823d74befc0f86f21ccc8c AS builder
+FROM rust:1.57.0-alpine@sha256:b0b3eb57c3f385499dca593a021e848167f7130a22b41818b7bbf4bdf8bba670 AS builder
 
 RUN apk add --update alpine-sdk
 COPY --chown=nobody:nobody . /src/
