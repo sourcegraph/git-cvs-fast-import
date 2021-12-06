@@ -10,7 +10,7 @@ license = "Apache-2.0"
 chrono = "0.4.19"
 derive_more = "0.99.17"
 eq-macro = { path = "../eq-macro" }
-itertools = "0.10.1"
+itertools = "0.10.3"
 nom = "7.1.0"
 thiserror = "1.0.30"
 
