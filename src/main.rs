@@ -111,6 +111,10 @@ async fn main() -> anyhow::Result<()> {
     // Parse command line arguments.
     let opt = Opt::from_args();
 
+    // Set up tokio-console in debug builds.
+    #[cfg(debug_assertions)]
+    console_subscriber::init();
+
     // Set up logging.
     Logger::try_with_env_or_str(opt.log.as_str())?
         .adaptive_format_for_stderr(AdaptiveFormat::Detailed)

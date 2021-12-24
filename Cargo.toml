@@ -14,6 +14,9 @@ tokio-test = "0.4.2"
 anyhow = "1.0.45"
 async-recursion = "0.3.2"
 comma-v = { path = "comma-v" }
+# Temporarily the Git repo until the fix for
+# https://github.com/tokio-rs/console/issues/180 lands in a release.
+console-subscriber = { git = "https://github.com/tokio-rs/console" }
 flexi_logger = { version = "0.19.6", features = ["async", "colors"] }
 flume = "0.10.9"
 git-cvs-fast-import-process = { path = "internal/process" }
@@ -27,7 +30,7 @@ rcs-ed = { path = "rcs-ed" }
 structopt = "0.3.25"
 tempfile = "3.2.0"
 thiserror = "1.0.30"
-tokio = { version = "1.13.0", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time", "fs"] }
+tokio = { version = "1.13.0", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time", "tracing", "fs"] }
 walkdir = "2.3.2"
 
 [features]
