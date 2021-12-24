@@ -13,6 +13,6 @@ serde = { version = "1.0.132", features = ["derive", "rc"] }
 speedy = "0.8.0"
 thiserror = "1.0.30"
 tokio = { version = "1.15.0", features = ["io-util", "sync"] }
-zstd = "0.9.0"
+zstd = "0.9.1+zstd.1.5.1"
 
 [features]
