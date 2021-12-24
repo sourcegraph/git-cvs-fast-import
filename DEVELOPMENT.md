@@ -27,3 +27,7 @@ To create tags, use [cargo-release](https://github.com/crate-ci/cargo-release), 
 Once tagged, GitHub Actions will invoke [GoReleaser](https://github.com/goreleaser/goreleaser) to handle building packages and generating a release changelog. A mild amount of hackery is required to make it work with a Rust program, see [`.goreleaser.yml`](.goreleaser.yml) for the gory details.
 
 For maximum compatibility, binaries are built as static Linux binaries using the `x86_64-unknown-linux-musl` Rust target. Note that this means that non-Rust dependencies can only be added if they can easily be statically linked. (In practice, this hasn't been a problem thus far.)
+
+## Developing
+
+[`tokio-console`](https://github.com/tokio-rs/console) is wired up in debug builds. The default address is used, so just running `tokio-console` should be sufficient to connect.
