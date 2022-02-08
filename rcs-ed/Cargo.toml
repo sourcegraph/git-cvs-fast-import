@@ -12,4 +12,4 @@ nom = "7.1.0"
 thiserror = "1.0.30"
 
 [dev-dependencies]
-structopt = "0.3.25"
+structopt = "0.3.26"
