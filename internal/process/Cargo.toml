@@ -11,6 +11,6 @@ git-fast-import = { path = "../../git-fast-import" }
 log = "0.4.14"
 structopt = "0.3.26"
 thiserror = "1.0.30"
-tokio = { version = "1.15.0", features = ["io-util", "process", "sync"] }
+tokio = { version = "1.16.1", features = ["io-util", "process", "sync"] }
 
 [features]
