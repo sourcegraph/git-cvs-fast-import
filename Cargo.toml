@@ -11,7 +11,7 @@ members = [ "comma-v", "eq-macro", "git-fast-import", "internal/process", "inter
 tokio-test = "0.4.2"
 
 [dependencies]
-anyhow = "1.0.52"
+anyhow = "1.0.53"
 async-recursion = "1.0.0"
 comma-v = { path = "comma-v" }
 # Temporarily the Git repo until the fix for
