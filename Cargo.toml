@@ -8,7 +8,7 @@ license = "Apache-2.0"
 members = [ "comma-v", "eq-macro", "git-fast-import", "internal/process", "internal/state", "patchset", "rcs-ed" ]
 
 [dev-dependencies]
-tokio-test = "0.4.2"
+tokio-test = "0.4.4"
 
 [dependencies]
 anyhow = "1.0.53"
