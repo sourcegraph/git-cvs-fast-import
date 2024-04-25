@@ -12,7 +12,7 @@ tokio-test = "0.4.2"
 
 [dependencies]
 anyhow = "1.0.53"
-async-recursion = "1.0.0"
+async-recursion = "1.1.1"
 comma-v = { path = "comma-v" }
 # Temporarily the Git repo until the fix for
 # https://github.com/tokio-rs/console/issues/180 lands in a release.
