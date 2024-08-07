@@ -8,7 +8,7 @@ license = "Apache-2.0"
 
 [dependencies]
 chrono = "0.4.19"
-derive_more = "0.99.17"
+derive_more = "1.0.0"
 eq-macro = { path = "../eq-macro" }
 itertools = "0.10.3"
 nom = "7.1.0"
