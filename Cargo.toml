@@ -18,7 +18,7 @@ comma-v = { path = "comma-v" }
 # https://github.com/tokio-rs/console/issues/180 lands in a release.
 console-subscriber = { git = "https://github.com/tokio-rs/console" }
 flexi_logger = { version = "0.22.3", features = ["async", "colors"] }
-flume = "0.10.10"
+flume = "0.11.1"
 git-cvs-fast-import-process = { path = "internal/process" }
 git-cvs-fast-import-state = { path = "internal/state" }
 git-fast-import = { path = "git-fast-import" }
