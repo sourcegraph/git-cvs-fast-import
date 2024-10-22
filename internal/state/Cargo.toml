@@ -11,7 +11,7 @@ git-fast-import = { path = "../../git-fast-import" }
 log = "0.4.14"
 serde = { version = "1.0.136", features = ["derive", "rc"] }
 speedy = "0.8.1"
-thiserror = "1.0.30"
+thiserror = "1.0.65"
 tokio = { version = "1.16.1", features = ["io-util", "sync"] }
 zstd = "0.10.0"
 
