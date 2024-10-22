@@ -9,7 +9,7 @@ license = "Apache-2.0"
 [dependencies]
 anyhow = "1.0.53"
 nom = "7.1.0"
-thiserror = "1.0.30"
+thiserror = "1.0.65"
 
 [dev-dependencies]
 structopt = "0.3.26"

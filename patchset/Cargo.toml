@@ -8,4 +8,4 @@ license = "Apache-2.0"
 
 [dependencies]
 binary-heap-plus = "0.4.1"
-thiserror = "1.0.30"
+thiserror = "1.0.65"
