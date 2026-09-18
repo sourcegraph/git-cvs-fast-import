@@ -6,7 +6,7 @@ WORKDIR /src
 USER nobody:nobody
 RUN cargo build --release
 
-FROM alpine:3.15@sha256:21a3deaa0d32a8057914f36584b5288d2e5ecc984380bc0118285c70fa8c9300
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 COPY --from=builder /src/target/release/git-cvs-fast-import /usr/local/bin/git-cvs-fast-import
 ENTRYPOINT ["/usr/local/bin/git-cvs-fast-import"]
