@@ -9,6 +9,6 @@ license = "Apache-2.0"
 [dependencies]
 derive_more = "0.99.17"
 nom = "7.1.0"
-rev_lines = "0.2.1"
+rev_lines = "0.3.0"
 serde = "1.0.136"
 thiserror = "1.0.30"
